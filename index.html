@@ -790,33 +790,66 @@ async function saveFile(name, data, mime) {
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
-/* ---------- Kopplung Beamer <-> Handy (WebRTC über PeerJS) ---------- */
+/* ---------- Kopplung Beamer <-> Handy ----------
+   Weg 1: direkte WebRTC-Verbindung (PeerJS).  Weg 2 (Ausweichweg): Weiterleitung über öffentliche MQTT-Broker.
+   Übertragen werden nur Frage, Kartennummern und Buchstaben – keine Namen. */
 const PREFIX = 'kartenabfrage-', CODECH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const TOPIC = c => 'kartenabfrage/v2/' + c;
 let peer = null, conns = [], hostConn = null, hostTries = 0;
+let relays = [], relayPhones = {}, mode = null, myId = Math.random().toString(36).slice(2, 10), joinTimer = 0, pingTimer = 0, pruneTimer = 0;
 const loadScript = src => new Promise((ok, no) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = no; document.head.append(el); });
 async function lib(globalName, urls) { if (window[globalName]) return true; for (const u of urls) { try { await loadScript(u); if (window[globalName]) return true; } catch (e) {} } return false; }
 const needPeer = () => lib('Peer', ['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js']);
+const needMqtt = () => lib('mqtt', ['https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js', 'https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js']);
 const newCode = () => Array.from({ length: 6 }, () => CODECH[Math.random() * CODECH.length | 0]).join('');
-function setStatus(t, on) {
+function setStatus(t, chip, ok) {
   $('#pairStatus').textContent = t; const ch = $('#pairChip');
-  ch.hidden = !on; ch.textContent = on || ''; $('#pairBtn').textContent = on ? 'Kopplung' : 'Handy koppeln';
+  ch.hidden = !chip; ch.textContent = chip || ''; ch.classList.toggle('off', !ok);
+  $('#pairBtn').textContent = chip ? 'Kopplung' : 'Handy koppeln';
 }
 function showPair(show) { $('#pair').hidden = !show; }
-const noLib = () => setStatus(isPreview() ? 'In der Claude-Vorschau ist die Kopplung gesperrt – nutze deinen Netlify-Link.' : 'Kopplung nicht möglich: keine Internetverbindung oder der Dienst ist blockiert.');
+const noLib = () => setStatus(isPreview() ? 'In der Claude-Vorschau ist die Kopplung gesperrt – nutze deinen Web-Link.' : 'Kopplung nicht möglich: keine Internetverbindung oder die Dienste sind blockiert.');
+/* MQTT-Weiterleitung: verbindet zu einem oder allen Brokern */
+async function relayConnect(code, sub, onMsg, all) {
+  if (!await needMqtt()) return [];
+  const tries = BROKERS.map(url => new Promise(res => {
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    try {
+      const cl = mqtt.connect(url, { clientId: 'ka_' + myId + '_' + Math.random().toString(36).slice(2, 6), clean: true, connectTimeout: 7000, reconnectPeriod: 4000, keepalive: 30 });
+      cl.on('connect', () => { cl.subscribe(TOPIC(code) + '/' + sub); fin(cl); });
+      cl.on('message', (t, p) => { try { onMsg(JSON.parse(p.toString())); } catch (e) {} });
+      cl.on('error', () => {}); setTimeout(() => { if (!done) { try { cl.end(true); } catch (e) {} fin(null); } }, 8000);
+    } catch (e) { fin(null); }
+  }));
+  if (all) return (await Promise.all(tries)).filter(Boolean);
+  return new Promise(res => { let left = tries.length, got = false;
+    tries.forEach(p => p.then(cl => { left--; if (cl && !got) { got = true; res([cl]); } else if (cl) { try { cl.end(true); } catch (e) {} } else if (!left && !got) res([]); })); });
+}
+const pub = (sub, code, m) => relays.forEach(cl => { try { cl.publish(TOPIC(code) + '/' + sub, JSON.stringify(m)); } catch (e) {} });
 function endPair() {
   try { peer && peer.destroy(); } catch (e) {}
-  peer = null; conns = []; hostConn = null; R = null; role = null; revealed = false; pending = {};
+  relays.forEach(cl => { try { cl.end(true); } catch (e) {} });
+  clearTimeout(joinTimer); clearInterval(pingTimer); clearInterval(pruneTimer);
+  peer = null; conns = []; hostConn = null; relays = []; relayPhones = {}; mode = null; R = null; role = null; revealed = false; pending = {};
   document.body.classList.remove('host-on', 'scan-on'); setStatus(''); renderLive();
 }
-/* Beamer */
+/* ===== Beamer ===== */
 async function startHost() {
   if (role === 'scan') endPair();
-  role = 'host'; $('#hostBox').hidden = false; setStatus('Verbinde mit Vermittlungsdienst …');
-  if (!await needPeer()) return noLib();
+  role = 'host'; $('#hostBox').hidden = false; setStatus('Verbinde mit den Vermittlungsdiensten …', 'Verbinde …', false);
   st.pairCode ||= newCode(); save();
-  $('#pairCode').textContent = st.pairCode.slice(0, 3) + ' ' + st.pairCode.slice(3); showQR(st.pairCode);
+  const code = st.pairCode;
+  $('#pairCode').textContent = code.slice(0, 3) + ' ' + code.slice(3); showQR(code);
+  // Weiterleitung (Ausweichweg) – parallel zu allen Brokern
+  if (!relays.length) relayConnect(code, 'h', d => { if (d && d.from) { const neu = !relayPhones[d.from]; relayPhones[d.from] = Date.now(); if (neu || d.t === 'hello') { updHost(); pub('p', code, stateMsg()); } } onHostData(d); }, true)
+    .then(cls => { if (role !== 'host') { cls.forEach(c => c.end(true)); return; } relays = cls; updHost(); });
+  clearInterval(pruneTimer);
+  pruneTimer = setInterval(() => { const now = Date.now(); let ch = false; for (const k in relayPhones) if (now - relayPhones[k] > 35000) { delete relayPhones[k]; ch = true; } if (ch) updHost(); }, 5000);
+  // Direktverbindung
+  if (!await needPeer()) { if (!relays.length) noLib(); return; }
   try { peer && peer.destroy(); } catch (e) {}
-  peer = new Peer(PREFIX + st.pairCode);
+  peer = new Peer(PREFIX + code);
   peer.on('open', () => { hostTries = 0; updHost(); });
   peer.on('connection', c => {
     c.on('open', () => { conns.push(c); updHost(); try { c.send(stateMsg()); } catch (e) {} });
@@ -826,16 +859,18 @@ async function startHost() {
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
   peer.on('error', e => {
-    if (e.type === 'unavailable-id') { // alter Eintrag nach Neuladen – kurz warten, dann neuer Code
-      if (++hostTries > 2) { st.pairCode = newCode(); save(); hostTries = 0; }
-      setStatus('Code wird noch freigegeben … einen Moment'); setTimeout(startHost, 3500);
-    } else if (e.type !== 'peer-unavailable') setStatus('Verbindungsproblem (' + e.type + '). Seite neu laden oder Netz wechseln.');
+    if (e.type === 'unavailable-id') {
+      if (++hostTries > 2) { st.pairCode = newCode(); save(); hostTries = 0; relays.forEach(c => c.end(true)); relays = []; }
+      setStatus('Code wird noch freigegeben … einen Moment', 'Verbinde …', false); setTimeout(startHost, 3500);
+    }
   });
 }
 function updHost() {
-  const n = conns.length;
+  const n = conns.length + Object.keys(relayPhones).length;
   document.body.classList.toggle('host-on', n > 0);
-  setStatus(n ? 'Handy verbunden – du kannst dieses Fenster schließen.' : 'Bereit. Warte auf das Handy …', n ? (n > 1 ? n + ' Handys verbunden' : 'Handy verbunden') : 'Warte auf Handy');
+  const ready = (peer && peer.open) || relays.length;
+  if (n) setStatus('Handy verbunden – du kannst dieses Fenster schließen.', n > 1 ? n + ' Handys verbunden' : 'Handy verbunden', true);
+  else setStatus(ready ? 'Bereit. Warte auf das Handy …' : 'Verbinde mit den Vermittlungsdiensten …', 'Warte auf Handy', false);
   if (n) setTimeout(() => showPair(false), 1500);
   renderLive();
 }
@@ -846,15 +881,19 @@ function stateMsg() {
     total: c ? c.students.length : 0, a: q ? { ...ansFor(q) } : {} };
 }
 let bcT = 0;
-function broadcast() { if (role !== 'host' || !conns.length) return; clearTimeout(bcT); bcT = setTimeout(() => { const m = stateMsg(); conns.forEach(c => { try { c.send(m); } catch (e) {} }); }, 40); }
+function broadcast() {
+  if (role !== 'host') return; const hasRelay = Object.keys(relayPhones).length && relays.length;
+  if (!conns.length && !hasRelay) return;
+  clearTimeout(bcT); bcT = setTimeout(() => { const m = stateMsg(); conns.forEach(c => { try { c.send(m); } catch (e) {} }); if (hasRelay) pub('p', st.pairCode, m); }, 60);
+}
 function onHostData(d) {
-  if (!d || typeof d !== 'object') return; const q = curQ();
+  if (!d || typeof d !== 'object' || role !== 'host') return; const q = curQ();
   if (d.t === 'ans' && q && d.q === q.id) {
     const no = parseInt(d.no, 10); if (!(no > 0 && no <= 63)) return;
     const a = ansFor(q);
     if (d.a === null) delete a[no]; else if (LET.slice(0, nOpts(q)).includes(d.a)) a[no] = d.a; else return;
     save(); renderLive();
-  } else if (d.t === 'ans') broadcast(); // veraltete Frage: Handy neu synchronisieren
+  } else if (d.t === 'ans') broadcast();
   if (d.t === 'cmd') {
     const b = { next: '#qNext', prev: '#qPrev', reveal: '#reveal', clear: '#clearQ' }[d.c];
     if (b && !$(b).disabled) $(b).click();
@@ -866,36 +905,65 @@ async function showQR(code) {
   if (!await lib('qrcode', ['https://unpkg.com/qrcode-generator@1.4.4/qrcode.js', 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js'])) return;
   try { const q = qrcode(0, 'M'); q.addData(location.origin + location.pathname + '#koppeln-' + code); q.make(); box.innerHTML = q.createSvgTag(6, 2); } catch (e) {}
 }
-/* Handy */
+/* ===== Handy ===== */
+function onState(d) {
+  if (!d || d.t !== 'state') return;
+  if (!R || R.qid !== d.qid) pending = {};
+  const first = !R;
+  R = { qid: d.qid, qi: +d.qi || 0, qn: +d.qn || 0, text: String(d.text || ''), options: (d.options || []).map(String).slice(0, 4),
+    correct: d.correct || null, total: Math.min(63, +d.total || 0), a: d.a && typeof d.a === 'object' ? d.a : {} };
+  revealed = !!d.revealed;
+  if (first) connected();
+  renderLive();
+}
+function connected() {
+  clearTimeout(joinTimer);
+  setStatus(mode === 'relay' ? 'Mit dem Beamer verbunden (über Weiterleitung).' : 'Mit dem Beamer verbunden.', 'Mit Beamer verbunden', true);
+  document.body.classList.add('scan-on'); setTimeout(() => showPair(false), 1200);
+}
+function lost(msg) {
+  R = null; document.body.classList.remove('scan-on'); renderLive(); showPair(true);
+  setStatus(msg || 'Verbindung zum Beamer getrennt. Auf „Verbinden“ tippen, um es erneut zu versuchen.', 'Getrennt', false);
+}
 async function joinHost(code) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 6) { setStatus('Bitte den 6-stelligen Code vom Beamer eingeben.'); showPair(true); return; }
   if (role) endPair();
-  role = 'scan'; showPair(true); $('#hostBox').hidden = true; $('#joinCode').value = code; setStatus('Verbinde …');
-  if (!await needPeer()) return noLib();
+  role = 'scan'; mode = 'direct'; showPair(true); $('#hostBox').hidden = true; $('#joinCode').value = code;
+  setStatus('Verbinde direkt …', 'Verbinde …', false);
+  const toRelay = () => { if (role === 'scan' && mode === 'direct') startRelay(code); };
+  joinTimer = setTimeout(toRelay, 6000); // klappt die Direktverbindung nicht schnell, Weiterleitung nutzen
+  if (!await needPeer()) return toRelay();
   peer = new Peer();
   peer.on('open', () => {
-    hostConn = peer.connect(PREFIX + code, { reliable: true });
-    hostConn.on('open', () => { setStatus('Mit dem Beamer verbunden.', 'Mit Beamer verbunden'); document.body.classList.add('scan-on'); setTimeout(() => showPair(false), 1200); });
-    hostConn.on('data', d => {
-      if (!d || d.t !== 'state') return;
-      if (!R || R.qid !== d.qid) pending = {};
-      R = { qid: d.qid, qi: +d.qi || 0, qn: +d.qn || 0, text: String(d.text || ''), options: (d.options || []).map(String).slice(0, 4),
-        correct: d.correct || null, total: Math.min(63, +d.total || 0), a: d.a && typeof d.a === 'object' ? d.a : {} };
-      revealed = !!d.revealed; renderLive();
-    });
-    hostConn.on('close', () => {
-      R = null; document.body.classList.remove('scan-on'); renderLive(); showPair(true);
-      setStatus('Verbindung zum Beamer getrennt. Auf „Verbinden“ tippen, um es erneut zu versuchen.', 'Getrennt'); $('#pairChip').classList.add('off');
-    });
+    const c = peer.connect(PREFIX + code, { reliable: true });
+    c.on('open', () => { if (mode !== 'direct') { try { c.close(); } catch (e) {} return; } hostConn = c; });
+    c.on('data', d => { if (mode === 'direct') onState(d); });
+    c.on('close', () => { if (mode === 'direct') lost(); });
   });
-  peer.on('error', e => setStatus(e.type === 'peer-unavailable' ? 'Code nicht gefunden. Ist am Beamer „Kopplungscode anzeigen“ geöffnet?' : 'Verbindungsproblem (' + e.type + '). Im Schul-WLAN hilft oft mobiles Internet am Handy.'));
+  peer.on('error', e => { if (mode === 'direct') toRelay(); });
 }
-function send(m) { try { if (hostConn && hostConn.open) hostConn.send(m); else toast('Nicht mit dem Beamer verbunden'); } catch (e) {} }
+async function startRelay(code) {
+  mode = 'relay'; clearTimeout(joinTimer);
+  try { peer && peer.destroy(); } catch (e) {} peer = null; hostConn = null;
+  setStatus('Direktverbindung blockiert – versuche es über die Weiterleitung …', 'Verbinde …', false);
+  relays = await relayConnect(code, 'p', d => { if (role === 'scan' && mode === 'relay') onState(d); }, false);
+  if (role !== 'scan' || mode !== 'relay') return;
+  if (!relays.length) return lost('Keine Verbindung möglich: Auch die Weiterleitung ist in diesem Netz gesperrt. Probiere mobile Daten oder den Handy-Hotspot für den Laptop.');
+  const hello = () => pub('h', code, { t: 'hello', from: myId });
+  hello(); let n = 0;
+  const waitT = setInterval(() => { if (R || role !== 'scan') return clearInterval(waitT); if (++n > 5) { clearInterval(waitT); lost('Code nicht gefunden. Ist am Beamer „Kopplungscode anzeigen“ geöffnet und der Code richtig?'); } else hello(); }, 2000);
+  clearInterval(pingTimer); pingTimer = setInterval(() => { if (role === 'scan' && mode === 'relay') pub('h', code, { t: 'ping', from: myId }); }, 10000);
+}
+function send(m) {
+  if (role !== 'scan') return;
+  if (mode === 'relay' && relays.length) { pub('h', $('#joinCode').value, { ...m, from: myId }); return; }
+  try { if (hostConn && hostConn.open) hostConn.send(m); else toast('Nicht mit dem Beamer verbunden'); } catch (e) {}
+}
 $('#pairBtn').onclick = () => showPair($('#pair').hidden);
 $('#pairClose').onclick = () => showPair(false);
 $('#pairHost').onclick = startHost;
-$('#pairJoin').onclick = () => { $('#pairChip').classList.remove('off'); joinHost($('#joinCode').value); };
+$('#pairJoin').onclick = () => joinHost($('#joinCode').value);
 $('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#pairJoin').click(); });
 $('#pairEnd').onclick = () => { endPair(); showPair(false); };
 
