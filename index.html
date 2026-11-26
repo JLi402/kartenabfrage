@@ -87,6 +87,16 @@ td.ok{color:var(--ok);font-weight:700}td.bad{color:var(--bad);font-weight:700}
 .how div{border:1.5px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
 @media(max-width:700px){.how{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 #printArea{display:none}
+.qimg{display:block;max-width:100%;max-height:42vh;margin:0 auto 14px;border-radius:10px;background:#fff;border:1.5px solid var(--line)}
+.imgrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.imgrow img{height:72px;width:auto;border-radius:6px;border:1.5px solid var(--line);background:#fff}
+.meter{position:relative;height:22px;border-radius:6px;background:var(--line);min-width:120px;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;background:var(--ok);opacity:.55}
+.meter.mid i{background:var(--B)}.meter.low i{background:var(--bad)}
+.meter b{position:relative;display:block;padding:0 8px;font-size:13px;line-height:22px;color:var(--ink)}
+.chip[hidden]{display:none}
+td.q{white-space:normal;text-align:left;min-width:180px;max-width:360px}
+td.hit{font-weight:700;color:var(--ok)}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:99px;background:var(--ok);color:#fff;font-weight:700;font-size:14px}
 .chip.off{background:var(--mute)}
 .code{font-size:clamp(40px,7vw,64px);font-weight:700;letter-spacing:.12em;line-height:1.1;margin:10px 0}
@@ -134,11 +144,12 @@ body.scan-on .qtext{font-size:20px}
     </div>
     <p id="pairStatus" role="status" style="font-weight:700;margin:12px 0 2px"></p>
     <p id="pairDiag" class="small muted" style="margin:0 0 8px"></p>
-    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-5</span></div>
+    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-6</span></div>
   </div>
   <div class="live">
     <div class="panel">
       <div class="qtext" id="qText"></div>
+      <img id="qImg" class="qimg" alt="Abbildung zur Frage" hidden>
       <div class="opts" id="qOpts"></div>
       <div class="bar" style="margin:14px 0 0">
         <button class="btn pri" id="reveal">Auflösen</button>
@@ -227,6 +238,10 @@ body.scan-on .qtext{font-size:20px}
   <div class="bar"><select id="rCls" aria-label="Klasse"></select><select id="rSet" aria-label="Fragensatz"></select>
     <button class="btn" id="rCsv">CSV herunterladen</button><button class="btn ghost" id="rCopy">CSV kopieren</button><button class="btn ghost" id="rClear">Ergebnisse löschen</button></div>
   <div class="panel scroll"><table id="rTab"></table></div>
+  <div class="panel" style="margin-top:16px"><h2>Anteil richtiger Antworten je Frage</h2>
+    <p id="rAvg" style="margin:0 0 10px"></p>
+    <div class="scroll"><table id="rQTab"></table></div>
+    <p class="small muted" style="margin:8px 0 0">Grün ab 70 %, gelb ab 40 %, rot darunter. Die Spalten A–D zeigen, welche falsche Antwort am häufigsten gewählt wurde – ein Hinweis auf typische Fehlvorstellungen.</p></div>
   <div class="panel" style="margin-top:16px"><h2>Sicherung</h2>
     <p class="small muted" style="margin-top:0">Klassen, Fragen und Ergebnisse liegen nur in diesem Browser. Sichere sie als Datei, um sie auf ein anderes Gerät zu bringen.</p>
     <div class="bar"><button class="btn" id="bExp">Alles exportieren</button><label class="btn ghost" for="bImp" style="display:flex;align-items:center">Sicherung importieren</label><input type="file" id="bImp" accept=".json,application/json" hidden></div></div>
@@ -460,7 +475,8 @@ function demo() {
 let st;
 try { st = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
 if (!st || !st.classes) st = demo();
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} };
+let warned = 0;
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { if (Date.now() - warned > 8000) { warned = Date.now(); setTimeout(() => toast('Browserspeicher voll – Bilder verkleinern oder alte Fragensätze löschen. Sicherung exportieren!'), 0); } } };
 
 const cls = () => st.classes.find(c => c.id === st.sel.cls) || st.classes[0];
 const set = () => st.sets.find(s => s.id === st.sel.set) || st.sets[0];
@@ -495,6 +511,8 @@ function renderLive() {
   $('#qPrev').disabled = !q || qi === 0; $('#qNext').disabled = !q || qi >= qn - 1;
   broadcast();
   $('#reveal').textContent = revealed ? 'Verbergen' : 'Auflösen';
+  const okImg = q && typeof q.img === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(q.img);
+  $('#qImg').hidden = !okImg; if (okImg) $('#qImg').src = q.img; else $('#qImg').removeAttribute('src');
   if (!q) { $('#qText').textContent = R ? 'Am Beamer ist noch keine Frage ausgewählt.' : 'Lege unter „Fragen“ einen Fragensatz an.'; $('#qOpts').innerHTML = ''; renderRoster(); return; }
   $('#qText').textContent = q.text;
   const a = ansFor(q), vals = Object.values(a), tot = vals.length || 1;
@@ -646,6 +664,9 @@ function renderFragen() {
       <button class="btn ghost" data-act="down" aria-label="nach unten"${qi < s.qs.length - 1 ? '' : ' disabled'}>↓</button>
       <button class="btn ghost" data-act="del">Löschen</button></div>
     <textarea rows="2" data-f="text" aria-label="Fragetext">${esc(q.text)}</textarea>
+    <div class="imgrow">${q.img ? `<img src="${esc(q.img)}" alt="Bild zu Frage ${qi + 1}">` : ''}
+      <label class="btn ghost" style="display:flex;align-items:center">${q.img ? 'Bild ersetzen' : 'Bild hinzufügen'}<input type="file" accept="image/*" data-img hidden></label>
+      ${q.img ? '<button class="btn ghost" data-act="noimg">Bild entfernen</button>' : '<span class="small muted">oder Bild kopieren und hier mit Strg+V einfügen</span>'}</div>
     ${LET.map((L, i) => `<div class="row"><span class="let" style="background:var(--${L})">${L}</span>
       <input type="text" data-f="o${i}" value="${esc(q.options[i])}" placeholder="${i < 2 ? 'Antwort' : 'optional'}" aria-label="Antwort ${L}">
       <label class="chk small"><input type="radio" name="c${qi}" data-f="c" value="${L}"${q.correct === L ? ' checked' : ''}> richtig</label></div>`).join('')}
@@ -659,9 +680,29 @@ $('#fList').addEventListener('input', e => {
 $('#fList').addEventListener('click', e => {
   const b = e.target.closest('button[data-act]'); if (!b) return; const qs = set().qs, i = +b.closest('.qedit').dataset.q;
   if (b.dataset.act === 'del') { qs.splice(i, 1); toast('Frage gelöscht'); }
+  if (b.dataset.act === 'noimg') delete qs[i].img;
   if (b.dataset.act === 'up') [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]];
   if (b.dataset.act === 'down') [qs[i + 1], qs[i]] = [qs[i], qs[i + 1]];
   save(); renderFragen();
+});
+/* Bilder: verkleinern (max. 1200 px) und als JPEG speichern */
+async function shrink(file) {
+  let img; try { img = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); }
+  const sc = Math.min(1, 1200 / Math.max(img.width, img.height)), W = Math.round(img.width * sc), H = Math.round(img.height * sc);
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.drawImage(img, 0, 0, W, H);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+async function setImg(qi, file) {
+  if (!file || !/^image\//.test(file.type)) return toast('Bitte eine Bilddatei wählen');
+  try { const q = set().qs[qi]; q.img = await shrink(file); save(); renderFragen(); toast('Bild eingefügt'); }
+  catch (e) { toast('Das Bild konnte nicht gelesen werden'); }
+}
+$('#fList').addEventListener('change', e => { if (e.target.matches('input[data-img]')) setImg(+e.target.closest('.qedit').dataset.q, e.target.files[0]); });
+$('#fList').addEventListener('paste', e => {
+  const box = e.target.closest('.qedit'); if (!box) return;
+  const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (it) { e.preventDefault(); setImg(+box.dataset.q, it.getAsFile()); }
 });
 $('#fSet').onchange = e => { st.sel.set = e.target.value; st.sel.q = 0; save(); renderFragen(); };
 $('#fName').oninput = e => { set().name = e.target.value; save(); fillSel($('#fSet'), st.sets, set().id); };
@@ -745,11 +786,27 @@ function table() {
     return { no, n, cells, pct: scored.length ? Math.round(right / scored.length * 100) : null };
   });
   const foot = s.qs.map(q => { const v = Object.values(r[q.id] || {}); return q.correct && v.length ? Math.round(v.filter(x => x === q.correct).length / v.length * 100) : null; });
-  return { head: s.qs, rows, foot };
+  const per = s.qs.map((q, i) => {
+    const v = Object.values(r[q.id] || {}), cnt = LET.map(L => v.filter(x => x === L).length);
+    const right = q.correct ? cnt[LET.indexOf(q.correct)] : null;
+    return { i, q, n: v.length, cnt, right, pct: q.correct && v.length ? Math.round(right / v.length * 100) : null };
+  });
+  return { head: s.qs, rows, foot, per };
+}
+function renderQTab(per) {
+  const sc = per.filter(p => p.pct !== null), tot = sc.reduce((a, p) => a + p.n, 0), ok = sc.reduce((a, p) => a + p.right, 0);
+  $('#rAvg').innerHTML = tot ? `Insgesamt <b>${Math.round(ok / tot * 100)} %</b> richtige Antworten (${ok} von ${tot}).` : '<span class="muted">Noch keine bewerteten Antworten.</span>';
+  if (!per.length) { $('#rQTab').innerHTML = ''; return; }
+  $('#rQTab').innerHTML = `<thead><tr><th>Frage</th><th>Lösung</th>${LET.map(L => `<th>${L}</th>`).join('')}<th>Antworten</th><th>richtig</th><th style="min-width:150px">Anteil richtig</th></tr></thead><tbody>` +
+    per.map(p => { const cl = p.pct === null ? '' : p.pct >= 70 ? '' : p.pct >= 40 ? ' mid' : ' low';
+      return `<tr><td class="q"><b>F${p.i + 1}</b> ${esc(p.q.text.length > 90 ? p.q.text.slice(0, 88) + ' …' : p.q.text)}</td><td>${p.q.correct || '–'}</td>` +
+        p.cnt.map((c, k) => `<td class="${p.q.correct === LET[k] ? 'hit' : ''}">${k < nOpts(p.q) ? c : ''}</td>`).join('') +
+        `<td>${p.n}</td><td>${p.right ?? '–'}</td><td>${p.pct === null ? '<span class="muted">' + (p.q.correct ? 'keine Antworten' : 'keine Lösung hinterlegt') + '</span>' : `<div class="meter${cl}"><i style="width:${p.pct}%"></i><b>${p.pct} %</b></div>`}</td></tr>`; }).join('') + '</tbody>';
 }
 function renderRes() {
   fillSel($('#rCls'), st.classes, cls()?.id); fillSel($('#rSet'), st.sets, set()?.id);
-  const { head, rows, foot } = table();
+  const { head, rows, foot, per } = table();
+  renderQTab(per || []);
   if (!rows.length || !head.length) { $('#rTab').innerHTML = '<tr><td class="muted">Noch keine Daten – Klasse und Fragen anlegen, dann abfragen.</td></tr>'; return; }
   $('#rTab').innerHTML = `<thead><tr><th>Name</th><th>Karte</th>${head.map((q, i) => `<th title="${esc(q.text)}">F${i + 1}${q.correct ? ' (' + q.correct + ')' : ''}</th>`).join('')}<th>richtig</th></tr></thead><tbody>` +
     rows.map(r => `<tr><td>${esc(r.n)}</td><td>${r.no}</td>${r.cells.map((v, i) => `<td class="${v && head[i].correct ? (v === head[i].correct ? 'ok' : 'bad') : ''}">${v || '–'}</td>`).join('')}<td class="pct">${r.pct === null ? '–' : r.pct + ' %'}</td></tr>`).join('') +
@@ -760,6 +817,8 @@ function csv() {
   const lines = [['Name', 'Karte', ...head.map((h, i) => `F${i + 1}: ${h.text}`), 'Prozent richtig'].map(q).join(';')];
   lines.push(['Lösung', '', ...head.map(h => h.correct || ''), ''].map(q).join(';'));
   rows.forEach(r => lines.push([r.n, r.no, ...r.cells, r.pct ?? ''].map(q).join(';')));
+  lines.push('', ['Frage', 'Lösung', 'A', 'B', 'C', 'D', 'Antworten', 'richtig', 'Anteil richtig (%)'].map(q).join(';'));
+  (table().per || []).forEach(p => lines.push([`F${p.i + 1}: ${p.q.text}`, p.q.correct || '', ...p.cnt, p.n, p.right ?? '', p.pct ?? ''].map(q).join(';')));
   return '﻿' + lines.join('\r\n');
 }
 $('#rCls').onchange = e => { st.sel.cls = e.target.value; save(); renderRes(); };
