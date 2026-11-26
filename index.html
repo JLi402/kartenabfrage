@@ -132,8 +132,9 @@ body.scan-on .qtext{font-size:20px}
         <div class="bar"><input type="text" id="joinCode" placeholder="Code" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Kopplungscode" style="width:160px;text-transform:uppercase;letter-spacing:.1em">
           <button class="btn pri" id="pairJoin">Verbinden</button></div></div>
     </div>
-    <p id="pairStatus" role="status" style="font-weight:700;margin:12px 0 6px"></p>
-    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button></div>
+    <p id="pairStatus" role="status" style="font-weight:700;margin:12px 0 2px"></p>
+    <p id="pairDiag" class="small muted" style="margin:0 0 8px"></p>
+    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-4</span></div>
   </div>
   <div class="live">
     <div class="panel">
@@ -810,23 +811,27 @@ function setStatus(t, chip, ok) {
 }
 function showPair(show) { $('#pair').hidden = !show; }
 const noLib = () => setStatus(isPreview() ? 'In der Claude-Vorschau ist die Kopplung gesperrt – nutze deinen Web-Link.' : 'Kopplung nicht möglich: keine Internetverbindung oder die Dienste sind blockiert.');
-/* MQTT-Weiterleitung: verbindet zu einem oder allen Brokern */
-async function relayConnect(code, sub, onMsg, all) {
-  if (!await needMqtt()) return [];
+/* MQTT-Weiterleitung: verbindet zu allen Brokern; onConn je erreichbarem Broker */
+const diag = { direct: '–', relayOk: 0, relayTried: 0 };
+function showDiag() { $('#pairDiag').textContent = `Direktweg: ${diag.direct} · Weiterleitung: ${diag.relayTried ? diag.relayOk + ' von ' + BROKERS.length + ' Diensten erreichbar' : '–'}`; }
+async function relayConnect(code, sub, onMsg, onConn) {
+  diag.relayOk = 0; diag.relayTried = 0; showDiag();
+  if (!await needMqtt()) { diag.relayTried = 1; showDiag(); return 0; }
   const tries = BROKERS.map(url => new Promise(res => {
-    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    let done = false; const fin = v => { if (!done) { done = true; diag.relayTried++; if (v) diag.relayOk++; showDiag(); res(v); } };
     try {
       const cl = mqtt.connect(url, { clientId: 'ka_' + myId + '_' + Math.random().toString(36).slice(2, 6), clean: true, connectTimeout: 7000, reconnectPeriod: 4000, keepalive: 30 });
-      cl.on('connect', () => { cl.subscribe(TOPIC(code) + '/' + sub); fin(cl); });
+      cl.on('connect', () => { cl.subscribe(TOPIC(code) + '/' + sub, () => { if (!done) { fin(cl); onConn(cl); } }); });
       cl.on('message', (t, p) => { try { onMsg(JSON.parse(p.toString())); } catch (e) {} });
-      cl.on('error', () => {}); setTimeout(() => { if (!done) { try { cl.end(true); } catch (e) {} fin(null); } }, 8000);
+      cl.on('error', () => {}); setTimeout(() => { if (!done) { try { cl.end(true); } catch (e) {} fin(null); } }, 9000);
     } catch (e) { fin(null); }
   }));
-  if (all) return (await Promise.all(tries)).filter(Boolean);
-  return new Promise(res => { let left = tries.length, got = false;
-    tries.forEach(p => p.then(cl => { left--; if (cl && !got) { got = true; res([cl]); } else if (cl) { try { cl.end(true); } catch (e) {} } else if (!left && !got) res([]); })); });
+  return (await Promise.all(tries)).filter(Boolean).length;
 }
-const pub = (sub, code, m) => relays.forEach(cl => { try { cl.publish(TOPIC(code) + '/' + sub, JSON.stringify(m)); } catch (e) {} });
+const pubOn = (cl, sub, code, m) => { try { cl.publish(TOPIC(code) + '/' + sub, JSON.stringify(m)); } catch (e) {} };
+const pub = (sub, code, m) => relays.forEach(cl => pubOn(cl, sub, code, m));
+const seenMid = new Map(); // doppelte Nachrichten (mehrere Broker) nur einmal verarbeiten
+function fresh(mid) { if (!mid) return true; if (seenMid.has(mid)) return false; seenMid.set(mid, Date.now()); if (seenMid.size > 400) { const old = Date.now() - 60000; for (const [k, v] of seenMid) if (v < old) seenMid.delete(k); } return true; }
 function endPair() {
   try { peer && peer.destroy(); } catch (e) {}
   relays.forEach(cl => { try { cl.end(true); } catch (e) {} });
@@ -842,15 +847,19 @@ async function startHost() {
   const code = st.pairCode;
   $('#pairCode').textContent = code.slice(0, 3) + ' ' + code.slice(3); showQR(code);
   // Weiterleitung (Ausweichweg) – parallel zu allen Brokern
-  if (!relays.length) relayConnect(code, 'h', d => { if (d && d.from) { const neu = !relayPhones[d.from]; relayPhones[d.from] = Date.now(); if (neu || d.t === 'hello') { updHost(); pub('p', code, stateMsg()); } } onHostData(d); }, true)
-    .then(cls => { if (role !== 'host') { cls.forEach(c => c.end(true)); return; } relays = cls; updHost(); });
+  if (!relays.length) relayConnect(code, 'h', d => {
+      if (role !== 'host' || !d || !fresh(d.mid)) return;
+      if (d.from) { const neu = !relayPhones[d.from]; relayPhones[d.from] = Date.now(); if (neu || d.t === 'hello') { if (neu) updHost(); pub('p', code, stateMsg()); } }
+      onHostData(d);
+    }, cl => { if (role !== 'host') { try { cl.end(true); } catch (e) {} return; } relays.push(cl); updHost(); });
+  diag.direct = 'verbinde …'; showDiag();
   clearInterval(pruneTimer);
   pruneTimer = setInterval(() => { const now = Date.now(); let ch = false; for (const k in relayPhones) if (now - relayPhones[k] > 35000) { delete relayPhones[k]; ch = true; } if (ch) updHost(); }, 5000);
   // Direktverbindung
-  if (!await needPeer()) { if (!relays.length) noLib(); return; }
+  if (!await needPeer()) { diag.direct = 'nicht erreichbar'; showDiag(); return; }
   try { peer && peer.destroy(); } catch (e) {}
   peer = new Peer(PREFIX + code);
-  peer.on('open', () => { hostTries = 0; updHost(); });
+  peer.on('open', () => { hostTries = 0; diag.direct = 'bereit'; showDiag(); updHost(); });
   peer.on('connection', c => {
     c.on('open', () => { conns.push(c); updHost(); try { c.send(stateMsg()); } catch (e) {} });
     c.on('data', onHostData);
@@ -862,7 +871,7 @@ async function startHost() {
     if (e.type === 'unavailable-id') {
       if (++hostTries > 2) { st.pairCode = newCode(); save(); hostTries = 0; relays.forEach(c => c.end(true)); relays = []; }
       setStatus('Code wird noch freigegeben … einen Moment', 'Verbinde …', false); setTimeout(startHost, 3500);
-    }
+    } else if (!peer.open) { diag.direct = 'nicht erreichbar'; showDiag(); }
   });
 }
 function updHost() {
@@ -930,34 +939,36 @@ async function joinHost(code) {
   if (code.length !== 6) { setStatus('Bitte den 6-stelligen Code vom Beamer eingeben.'); showPair(true); return; }
   if (role) endPair();
   role = 'scan'; mode = 'direct'; showPair(true); $('#hostBox').hidden = true; $('#joinCode').value = code;
-  setStatus('Verbinde direkt …', 'Verbinde …', false);
+  setStatus('Verbinde direkt …', 'Verbinde …', false); diag.direct = 'verbinde …'; diag.relayTried = 0; showDiag();
   const toRelay = () => { if (role === 'scan' && mode === 'direct') startRelay(code); };
   joinTimer = setTimeout(toRelay, 6000); // klappt die Direktverbindung nicht schnell, Weiterleitung nutzen
   if (!await needPeer()) return toRelay();
   peer = new Peer();
   peer.on('open', () => {
     const c = peer.connect(PREFIX + code, { reliable: true });
-    c.on('open', () => { if (mode !== 'direct') { try { c.close(); } catch (e) {} return; } hostConn = c; });
+    c.on('open', () => { if (mode !== 'direct') { try { c.close(); } catch (e) {} return; } hostConn = c; diag.direct = 'verbunden'; showDiag(); });
     c.on('data', d => { if (mode === 'direct') onState(d); });
     c.on('close', () => { if (mode === 'direct') lost(); });
   });
   peer.on('error', e => { if (mode === 'direct') toRelay(); });
 }
 async function startRelay(code) {
-  mode = 'relay'; clearTimeout(joinTimer);
+  mode = 'relay'; clearTimeout(joinTimer); if (diag.direct !== 'verbunden') { diag.direct = 'blockiert'; showDiag(); }
   try { peer && peer.destroy(); } catch (e) {} peer = null; hostConn = null;
   setStatus('Direktverbindung blockiert – versuche es über die Weiterleitung …', 'Verbinde …', false);
-  relays = await relayConnect(code, 'p', d => { if (role === 'scan' && mode === 'relay') onState(d); }, false);
-  if (role !== 'scan' || mode !== 'relay') return;
-  if (!relays.length) return lost('Keine Verbindung möglich: Auch die Weiterleitung ist in diesem Netz gesperrt. Probiere mobile Daten oder den Handy-Hotspot für den Laptop.');
-  const hello = () => pub('h', code, { t: 'hello', from: myId });
-  hello(); let n = 0;
-  const waitT = setInterval(() => { if (R || role !== 'scan') return clearInterval(waitT); if (++n > 5) { clearInterval(waitT); lost('Code nicht gefunden. Ist am Beamer „Kopplungscode anzeigen“ geöffnet und der Code richtig?'); } else hello(); }, 2000);
+  const hello = cl => pubOn(cl, 'h', code, { t: 'hello', from: myId, mid: myId + Date.now() + Math.random() });
+  const t0 = Date.now();
+  const waitT = setInterval(() => {
+    if (R || role !== 'scan' || mode !== 'relay') return clearInterval(waitT);
+    if (Date.now() - t0 > 16000) { clearInterval(waitT); lost(relays.length ? 'Der Beamer antwortet nicht. Lade die App am Laptop neu (Strg+F5), öffne „Kopplungscode anzeigen“ und prüfe die Versionsnummer unten rechts – sie muss auf beiden Geräten gleich sein.' : 'Keine Verbindung möglich: Auch die Weiterleitung ist in diesem Netz gesperrt. Probiere mobile Daten oder den Handy-Hotspot für den Laptop.'); }
+    else relays.forEach(hello);
+  }, 2000);
+  await relayConnect(code, 'p', d => { if (role === 'scan' && mode === 'relay') onState(d); }, cl => { if (role !== 'scan') { try { cl.end(true); } catch (e) {} return; } relays.push(cl); hello(cl); });
   clearInterval(pingTimer); pingTimer = setInterval(() => { if (role === 'scan' && mode === 'relay') pub('h', code, { t: 'ping', from: myId }); }, 10000);
 }
 function send(m) {
   if (role !== 'scan') return;
-  if (mode === 'relay' && relays.length) { pub('h', $('#joinCode').value, { ...m, from: myId }); return; }
+  if (mode === 'relay' && relays.length) { pub('h', $('#joinCode').value, { ...m, from: myId, mid: myId + Date.now() + Math.random() }); return; }
   try { if (hostConn && hostConn.open) hostConn.send(m); else toast('Nicht mit dem Beamer verbunden'); } catch (e) {}
 }
 $('#pairBtn').onclick = () => showPair($('#pair').hidden);
