@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kartenabfrage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: freundliches, klares Klassenzimmer-Werkzeug – schnell bedienbar mitten in der Stunde
+   IDEA: die gedruckte Antwortkarte – Schwarz-Weiß-Muster auf weißem Karton
+   PICTURE: der Scanner mit Frage und Klassenraster ist das Bild selbst
+   COLOUR and TYPE: Karton-Weiß, Tinte, Signalrot als Akzent; A–D in vier Farben; Atkinson Hyperlegible
+   LAYOUT: schwarze Kopfleiste wie Kartenrand, darunter Arbeitsfläche in zwei Spalten, mobil gestapelt */
+:root{color-scheme:light dark;
+--bg:light-dark(#f4f3ef,#121212);--card:light-dark(#fff,#1c1c1c);--ink:light-dark(#141414,#f1f0ec);--mute:light-dark(#5d5d5a,#a9a8a3);
+--line:light-dark(#dcdad3,#333);--acc:#ff4f1f;--ok:#1f9d55;--bad:#d92d3a;
+--A:#e5484d;--B:#e8a100;--C:#12a594;--D:#6e56cf;--head:#111}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Atkinson Hyperlegible",system-ui,sans-serif;overflow-x:clip}
+button,input,select,textarea{font:inherit;color:inherit}
+header{background:var(--head);color:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;padding:10px max(3vw,14px)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px}
+.brand svg{width:30px;height:30px}
+nav{display:flex;flex-wrap:wrap;gap:4px}
+nav a{color:#ddd;text-decoration:none;padding:9px 14px;border-radius:8px;min-height:44px;display:flex;align-items:center}
+nav a[aria-current]{background:#fff;color:#111;font-weight:700}
+nav a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,.tile:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+main{max-width:1320px;margin:0 auto;padding:18px max(3vw,14px) 60px}
+section[hidden]{display:none}
+h1{font-size:clamp(26px,3.4vw,38px);line-height:1.08;margin:6px 0 14px;text-wrap:balance}
+h2{font-size:20px;margin:0 0 10px}
+.muted{color:var(--mute)}.small{font-size:14px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+select,input[type=text],input[type=number],textarea{background:var(--card);border:1.5px solid var(--line);border-radius:8px;padding:9px 11px;min-height:44px;font-size:16px}
+textarea{width:100%;resize:vertical}
+.btn{min-height:44px;padding:9px 16px;border-radius:8px;border:1.5px solid var(--ink);background:var(--card);cursor:pointer;font-weight:700}
+.btn.pri{background:var(--ink);color:var(--bg)}.btn.acc{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.ghost{border-color:var(--line);font-weight:400}
+.btn:disabled{opacity:.45;cursor:default}
+.panel{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:16px}
+.live>.panel{align-self:start}
+.live{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px}
+@media(max-width:900px){.live{grid-template-columns:minmax(0,1fr)}}
+.qtext{font-size:clamp(22px,2.6vw,32px);line-height:1.2;font-weight:700;margin:4px 0 14px;text-wrap:balance}
+.opts{display:grid;gap:8px}
+.opt{position:relative;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;border:1.5px solid var(--line);overflow:hidden;min-height:52px}
+.opt .fill{position:absolute;inset:0 auto 0 0;opacity:.18;transition:width .5s}
+.opt .let{flex:none;width:34px;height:34px;border-radius:7px;display:grid;place-items:center;color:#fff;font-weight:700;position:relative}
+.opt .txt{position:relative;flex:1}
+.opt .cnt{position:relative;font-weight:700;white-space:nowrap}
+.opt.right{border-color:var(--ok);border-width:3px}
+.opt.right .txt::after{content:" ✓";color:var(--ok);font-weight:700}
+.stage{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:16/10;display:grid;place-items:center}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.stage .hint{color:#ccc;text-align:center;padding:20px;max-width:440px;position:relative}
+.count{font-size:clamp(28px,4vw,44px);font-weight:700;line-height:1}
+.roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px;margin-top:12px}
+.tile{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;border:1.5px dashed var(--line);background:transparent;cursor:pointer;text-align:left;min-height:44px;font-size:15px}
+.tile b{flex:none;font-size:12px;color:var(--mute);width:20px}
+.tile span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.tile i{font-style:normal;font-weight:700;flex:none}
+.tile.on{border:1.5px solid var(--ink);background:var(--ink);color:var(--bg)}.tile.on b{color:inherit;opacity:.7}
+.tile.ok{background:var(--ok);border-color:var(--ok);color:#fff}.tile.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+.tile.ok b,.tile.bad b{color:#fff}
+.chk{display:flex;align-items:center;gap:8px;min-height:44px}
+.chk input{width:20px;height:20px}
+.qedit{border-top:1.5px solid var(--line);padding:14px 0;display:grid;gap:8px}
+.qedit .row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:8px;align-items:center}
+.qedit .let{width:34px;height:34px;border-radius:7px;display:grid;place-items:center;color:#fff;font-weight:700}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media(max-width:760px){.two{grid-template-columns:minmax(0,1fr)}}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.cards figure{margin:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+.cards figcaption{color:#444;font-size:13px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-svg{width:100%;height:auto;display:block}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td.ok{color:var(--ok);font-weight:700}td.bad{color:var(--bad);font-weight:700}
+.pct{font-weight:700}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .25s;max-width:90vw}
+#toast.show{opacity:1}
+.how{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:6px}
+.how div{border:1.5px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
+@media(max-width:700px){.how{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+#printArea{display:none}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:99px;background:var(--ok);color:#fff;font-weight:700;font-size:14px}
+.chip.off{background:var(--mute)}
+.code{font-size:clamp(40px,7vw,64px);font-weight:700;letter-spacing:.12em;line-height:1.1;margin:10px 0}
+#qr svg{width:180px;height:180px;display:block;background:#fff;border-radius:8px}
+.hostnote{display:none;padding:18px;border-radius:12px;background:var(--bg);border:1.5px dashed var(--line);font-weight:700}
+body.host-on #scanBox{display:none}body.host-on .hostnote{display:block}
+body.scan-on #lCls,body.scan-on #lSet,body.scan-on .how{display:none}
+body.scan-on .live>.panel:last-child{order:-1}
+body.scan-on .qtext{font-size:20px}
+@media print{body>*:not(#printArea){display:none!important}#printArea{display:block}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><svg viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="1.6" fill="#fff"/><path d="M2 2h8v8H2z M3.2 3.2v5.6h5.6V3.2z" fill="#111" fill-rule="evenodd"/><rect x="4.4" y="4.4" width="1.2" height="1.2" fill="#ff4f1f"/><rect x="5.6" y="6.4" width="2" height="1.2" fill="#111"/></svg>Kartenabfrage</div>
+  <nav id="nav">
+    <a href="#live">Abfrage</a><a href="#fragen">Fragen</a><a href="#klasse">Klassen</a><a href="#karten">Karten drucken</a><a href="#ergebnisse">Ergebnisse</a>
+  </nav>
+</header>
+<main>
+<!-- LIVE -->
+<section id="v-live">
+  <div class="bar">
+    <select id="lCls" aria-label="Klasse"></select>
+    <select id="lSet" aria-label="Fragensatz"></select>
+    <button class="btn ghost" id="qPrev" aria-label="Vorherige Frage">◀</button>
+    <span id="qPos" class="muted"></span>
+    <button class="btn ghost" id="qNext" aria-label="Nächste Frage">▶</button>
+    <span style="flex:1"></span>
+    <span class="chip" id="pairChip" hidden></span>
+    <button class="btn" id="pairBtn">Handy koppeln</button>
+  </div>
+  <div class="panel" id="pair" hidden style="margin-bottom:16px">
+    <div class="two">
+      <div><h2>Dieses Gerät steht am Beamer</h2>
+        <p class="small muted" style="margin-top:0">Zeigt Frage, Fortschritt und Auflösung. Klasse und Fragen liegen auf diesem Gerät.</p>
+        <button class="btn pri" id="pairHost">Kopplungscode anzeigen</button>
+        <div id="hostBox" hidden><div class="code" id="pairCode"></div><div id="qr"></div>
+          <p class="small muted">Am Handy den QR-Code mit der Kamera öffnen – oder die App öffnen, „Handy koppeln“ tippen und den Code eingeben.</p></div></div>
+      <div><h2>Dieses Gerät ist das Handy</h2>
+        <p class="small muted" style="margin-top:0">Scannt die Karten und schickt nur Kartennummer und Buchstabe an den Beamer. Blättern und Auflösen geht auch von hier.</p>
+        <div class="bar"><input type="text" id="joinCode" placeholder="Code" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Kopplungscode" style="width:160px;text-transform:uppercase;letter-spacing:.1em">
+          <button class="btn pri" id="pairJoin">Verbinden</button></div></div>
+    </div>
+    <p id="pairStatus" role="status" style="font-weight:700;margin:12px 0 6px"></p>
+    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button></div>
+  </div>
+  <div class="live">
+    <div class="panel">
+      <div class="qtext" id="qText"></div>
+      <div class="opts" id="qOpts"></div>
+      <div class="bar" style="margin:14px 0 0">
+        <button class="btn pri" id="reveal">Auflösen</button>
+        <button class="btn ghost" id="clearQ">Antworten dieser Frage löschen</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="hostnote">Das Handy scannt. Antworten erscheinen hier automatisch.</div>
+      <div id="scanBox">
+      <div class="stage" id="stage"><video id="vid" playsinline muted></video><canvas id="ov"></canvas>
+        <div class="hint" id="hint">Karten scannen: <b>Kamera starten</b> für den Live-Scan oder <b>Foto aufnehmen</b> und die ganze Klasse auf einmal erfassen.</div></div>
+      <div class="bar" style="margin:10px 0 0">
+        <button class="btn acc" id="camBtn">Kamera starten</button>
+        <label class="btn" for="photo" style="display:flex;align-items:center">Foto aufnehmen</label>
+        <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+        <label class="chk small"><input type="checkbox" id="mirror"> Bild gespiegelt</label>
+      </div>
+      <p class="small muted" id="camMsg" style="margin:6px 0 0"></p>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-top:12px"><span class="count" id="cnt">0/0</span><span class="muted" style="flex:1 1 220px">haben geantwortet · Kachel antippen = Antwort von Hand setzen</span></div>
+      <div class="roster" id="roster"></div>
+    </div>
+  </div>
+  <div class="how">
+    <div><b>1 · Karten drucken</b><br>Jede Person bekommt eine Karte mit fester Nummer.</div>
+    <div><b>2 · Hochhalten</b><br>Der Buchstabe der Antwort zeigt nach <b>oben</b>.</div>
+    <div><b>3 · Scannen</b><br>Kamera über die Klasse schwenken oder Foto machen.</div>
+    <div><b>4 · Auflösen</b><br>Verteilung zeigen, besprechen, nächste Frage.</div>
+  </div>
+</section>
+
+<!-- FRAGEN -->
+<section id="v-fragen" hidden>
+  <h1>Fragensätze</h1>
+  <div class="bar">
+    <select id="fSet" aria-label="Fragensatz"></select>
+    <input type="text" id="fName" aria-label="Name des Fragensatzes" style="flex:1;min-width:200px">
+    <button class="btn" id="fNew">Neuer Satz</button>
+    <button class="btn ghost" id="fDel">Satz löschen</button>
+  </div>
+  <div class="panel">
+    <div id="fList"></div>
+    <div class="bar" style="margin:14px 0 0"><button class="btn pri" id="fAdd">+ Frage</button><button class="btn" id="fAddTF">+ Richtig/Falsch</button></div>
+  </div>
+  <details class="panel" style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;min-height:32px">Fragen als Text einfügen</summary>
+    <p class="small muted">Eine Frage pro Block, darunter bis zu vier Antworten. Die richtige mit * markieren. Leerzeile trennt die Fragen.</p>
+    <textarea id="bulk" rows="8" placeholder="Welche Einheit hat die Leistung?&#10;*Watt&#10;Joule&#10;Newton&#10;Pascal"></textarea>
+    <div class="bar" style="margin:10px 0 0"><button class="btn" id="bulkGo">Fragen anhängen</button></div>
+  </details>
+</section>
+
+<!-- KLASSE -->
+<section id="v-klasse" hidden>
+  <h1>Klassen</h1>
+  <div class="bar">
+    <select id="kCls" aria-label="Klasse"></select>
+    <input type="text" id="kName" aria-label="Name der Klasse" style="flex:1;min-width:160px">
+    <button class="btn" id="kNew">Neue Klasse</button>
+    <button class="btn ghost" id="kDel">Klasse löschen</button>
+  </div>
+  <div class="two">
+    <div class="panel"><h2>Namen</h2><p class="small muted" style="margin-top:0">Eine Person pro Zeile. Zeile 1 bekommt Karte 1, Zeile 2 Karte 2 … (max. 63)</p>
+      <textarea id="kNames" rows="16"></textarea></div>
+    <div class="panel"><h2>Kartenzuordnung</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Karte</th></tr></thead><tbody id="kMap"></tbody></table></div></div>
+  </div>
+</section>
+
+<!-- KARTEN -->
+<section id="v-karten" hidden>
+  <h1>Antwortkarten drucken</h1>
+  <div class="bar">
+    <label class="chk">Klasse <select id="pCls"></select></label>
+    <label class="chk">bis Karte <input type="number" id="pCount" min="1" max="63" style="width:90px"></label>
+    <label class="chk">Pro Seite <select id="pPer"><option value="1">1 (groß)</option><option value="4" selected>4</option><option value="9">9 (klein)</option></select></label>
+    <label class="chk"><input type="checkbox" id="pNames" checked> Namen aufdrucken</label>
+  </div>
+  <div class="bar"><button class="btn pri" id="pPrint">Drucken</button><button class="btn" id="pFile">Druckdatei herunterladen</button>
+    <span class="small muted" id="pMsg"></span></div>
+  <p class="small muted">Tipp: auf festes Papier drucken, Größe 100 % (nicht „an Seite anpassen“ – egal ist es aber für die Erkennung). Größere Karten werden aus weiterer Entfernung erkannt; für Räume bis ca. 8 m: 4 pro Seite.</p>
+  <div class="cards" id="pPrev"></div>
+</section>
+
+<!-- ERGEBNISSE -->
+<section id="v-ergebnisse" hidden>
+  <h1 id="rTitle">Ergebnisse</h1>
+  <div class="bar"><select id="rCls" aria-label="Klasse"></select><select id="rSet" aria-label="Fragensatz"></select>
+    <button class="btn" id="rCsv">CSV herunterladen</button><button class="btn ghost" id="rCopy">CSV kopieren</button><button class="btn ghost" id="rClear">Ergebnisse löschen</button></div>
+  <div class="panel scroll"><table id="rTab"></table></div>
+  <div class="panel" style="margin-top:16px"><h2>Sicherung</h2>
+    <p class="small muted" style="margin-top:0">Klassen, Fragen und Ergebnisse liegen nur in diesem Browser. Sichere sie als Datei, um sie auf ein anderes Gerät zu bringen.</p>
+    <div class="bar"><button class="btn" id="bExp">Alles exportieren</button><label class="btn ghost" for="bImp" style="display:flex;align-items:center">Sicherung importieren</label><input type="file" id="bImp" accept=".json,application/json" hidden></div></div>
+</section>
+</main>
+<div id="printArea"></div>
+<div id="toast" role="status"></div>
+
+<script>/* PlickCore: Kartencodes + Erkennung (reines JS, ohne Abhängigkeiten) */
+const PlickCore = (() => {
+  const MAX_CARDS = 63, MIN_D = 5;
+  const ANSWER_BY_ROT = ['A', 'D', 'C', 'B']; // gesehene Drehung (im Uhrzeigersinn) -> Antwort oben
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function rot(b) { // 90° im Uhrzeigersinn
+    const o = new Array(25);
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) o[r * 5 + c] = b[(4 - c) * 5 + r];
+    return o;
+  }
+  function toInt(b) { let v = 0; for (let i = 0; i < 25; i++) v = (v << 1) | b[i]; return v; }
+  function pop(x) { x = x - ((x >>> 1) & 0x55555555); x = (x & 0x33333333) + ((x >>> 2) & 0x33333333); return (((x + (x >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24; }
+
+  const codes = [];   // codes[id-1] = bits (Array 25)
+  const table = [];   // {v, id, k}
+  (function build() {
+    const rng = mulberry32(20261125);
+    while (codes.length < MAX_CARDS) {
+      const b = Array.from({ length: 25 }, () => (rng() < 0.5 ? 1 : 0));
+      const ones = b.reduce((s, x) => s + x, 0);
+      if (ones < 9 || ones > 16) continue;
+      const rs = [b]; for (let k = 1; k < 4; k++) rs.push(rot(rs[k - 1]));
+      const vs = rs.map(toInt);
+      let ok = true;
+      for (let i = 0; i < 4 && ok; i++) for (let j = i + 1; j < 4; j++) if (pop(vs[i] ^ vs[j]) < MIN_D) { ok = false; break; }
+      for (let i = 0; i < 4 && ok; i++) for (const t of table) if (pop(vs[i] ^ t.v) < MIN_D) { ok = false; break; }
+      if (!ok) continue;
+      const id = codes.length + 1; codes.push(b);
+      vs.forEach((v, k) => table.push({ v, id, k }));
+    }
+  })();
+
+  /* Homographie: Einheitsquadrat -> Viereck (Heckbert) */
+  function sqToQuad(q) {
+    const [x0, y0] = q[0], [x1, y1] = q[1], [x2, y2] = q[2], [x3, y3] = q[3];
+    const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+    const dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+    let a, b, c, d, e, f, g, h;
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) {
+      a = x1 - x0; b = x3 - x0; c = x0; d = y1 - y0; e = y3 - y0; f = y0; g = 0; h = 0;
+    } else {
+      const den = dx1 * dy2 - dx2 * dy1;
+      g = (dx3 * dy2 - dx2 * dy3) / den; h = (dx1 * dy3 - dx3 * dy1) / den;
+      a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; c = x0;
+      d = y1 - y0 + g * y1; e = y3 - y0 + h * y3; f = y0;
+    }
+    return (u, v) => { const w = g * u + h * v + 1; return [(a * u + b * v + c) / w, (d * u + e * v + f) / w]; };
+  }
+
+  function hull(pts) {
+    pts.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    lo.pop(); up.pop(); return lo.concat(up);
+  }
+  const area = (P) => { let s = 0; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; s += p[0] * q[1] - q[0] * p[1]; } return Math.abs(s) / 2; };
+
+  function quadFromHull(H) {
+    let bi = 0, bj = 0, bd = -1;
+    for (let i = 0; i < H.length; i++) for (let j = i + 1; j < H.length; j++) {
+      const dx = H[i][0] - H[j][0], dy = H[i][1] - H[j][1], d = dx * dx + dy * dy;
+      if (d > bd) { bd = d; bi = i; bj = j; }
+    }
+    const A = H[bi], B = H[bj];
+    let kp = -1, kn = -1, dp = 0, dn = 0;
+    for (let i = 0; i < H.length; i++) {
+      const s = (B[0] - A[0]) * (H[i][1] - A[1]) - (B[1] - A[1]) * (H[i][0] - A[0]);
+      if (s > dp) { dp = s; kp = i; } if (s < dn) { dn = s; kn = i; }
+    }
+    if (kp < 0 || kn < 0) return null;
+    let Q = [A, H[kp], B, H[kn]];
+    const cx = Q.reduce((s, p) => s + p[0], 0) / 4, cy = Q.reduce((s, p) => s + p[1], 0) / 4;
+    Q.sort((p, q) => Math.atan2(p[1] - cy, p[0] - cx) - Math.atan2(q[1] - cy, q[0] - cx)); // im Bild: im Uhrzeigersinn
+    let s0 = 0; for (let i = 1; i < 4; i++) if (Q[i][0] + Q[i][1] < Q[s0][0] + Q[s0][1]) s0 = i;
+    return [0, 1, 2, 3].map(i => Q[(s0 + i) % 4]);
+  }
+
+  function detect(gray, W, H, opts = {}) {
+    const mirror = !!opts.mirror;
+    const t0 = Date.now();
+    // Integralbild + adaptiver Schwellwert
+    const W1 = W + 1, S = new Uint32Array(W1 * (H + 1));
+    for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += gray[y * W + x]; S[(y + 1) * W1 + x + 1] = S[y * W1 + x + 1] + row; } }
+    const r = Math.max(8, Math.round(Math.min(W, H) / 18));
+    const bin = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+      const ya = Math.max(0, y - r), yb = Math.min(H, y + r + 1);
+      for (let x = 0; x < W; x++) {
+        const xa = Math.max(0, x - r), xb = Math.min(W, x + r + 1);
+        const sum = S[yb * W1 + xb] - S[ya * W1 + xb] - S[yb * W1 + xa] + S[ya * W1 + xa];
+        const mean = sum / ((yb - ya) * (xb - xa));
+        if (gray[y * W + x] < mean * 0.86 - 2) bin[y * W + x] = 1;
+      }
+    }
+    // Zusammenhangskomponenten
+    const seen = new Uint8Array(W * H), stack = new Int32Array(W * H);
+    const minPix = opts.minPix || 60, maxPix = W * H * 0.4;
+    const found = new Map();
+    for (let start = 0; start < W * H; start++) {
+      if (!bin[start] || seen[start]) continue;
+      let sp = 0, n = 0; stack[sp++] = start; seen[start] = 1;
+      const list = [];
+      let minx = W, maxx = 0, miny = H, maxy = 0;
+      while (sp) {
+        const p = stack[--sp]; n++;
+        const x = p % W, y = (p / W) | 0;
+        if (n < 400000) list.push(p);
+        if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+        if (x > 0 && bin[p - 1] && !seen[p - 1]) { seen[p - 1] = 1; stack[sp++] = p - 1; }
+        if (x < W - 1 && bin[p + 1] && !seen[p + 1]) { seen[p + 1] = 1; stack[sp++] = p + 1; }
+        if (y > 0 && bin[p - W] && !seen[p - W]) { seen[p - W] = 1; stack[sp++] = p - W; }
+        if (y < H - 1 && bin[p + W] && !seen[p + W]) { seen[p + W] = 1; stack[sp++] = p + W; }
+      }
+      const bw = maxx - minx + 1, bh = maxy - miny + 1;
+      if (n < minPix || n > maxPix || bw < 10 || bh < 10 || bw > 4 * bh || bh > 4 * bw) continue;
+      if (n < 0.25 * bw * bh * 0.5) continue;
+      const rMin = new Int32Array(bh).fill(W), rMax = new Int32Array(bh).fill(-1);
+      for (const p of list) { const x = p % W, y = ((p / W) | 0) - miny; if (x < rMin[y]) rMin[y] = x; if (x > rMax[y]) rMax[y] = x; }
+      const pts = [];
+      for (let i = 0; i < bh; i++) if (rMax[i] >= 0) { const y = miny + i; pts.push([rMin[i], y], [rMin[i], y + 1], [rMax[i] + 1, y], [rMax[i] + 1, y + 1]); }
+      const Hl = hull(pts); if (Hl.length < 4) continue;
+      const Q = quadFromHull(Hl); if (!Q) continue;
+      const qa = area(Q), ha = area(Hl);
+      if (qa < 0.74 * ha || n < 0.3 * qa) continue;
+      const sides = [0, 1, 2, 3].map(i => Math.hypot(Q[i][0] - Q[(i + 1) % 4][0], Q[i][1] - Q[(i + 1) % 4][1]));
+      if (Math.max(...sides) > 3 * Math.min(...sides)) continue;
+      const res = readMarker(gray, W, H, Q, mirror);
+      if (!res) continue;
+      const prev = found.get(res.id);
+      if (!prev || res.dist < prev.dist) found.set(res.id, { ...res, corners: Q });
+    }
+    return { markers: [...found.values()], ms: Date.now() - t0 };
+  }
+
+  function readMarker(gray, W, H, Q, mirror) {
+    const map = sqToQuad(Q);
+    const px = (x, y) => {
+      if (x < 0 || y < 0 || x > W - 1.001 || y > H - 1.001) return -1;
+      const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i = y0 * W + x0;
+      return gray[i] * (1 - fx) * (1 - fy) + gray[i + 1] * fx * (1 - fy) + gray[i + W] * (1 - fx) * fy + gray[i + W + 1] * fx * fy;
+    };
+    const cell = (r, c) => {
+      let s = 0, n = 0;
+      for (const dy of [-0.2, 0, 0.2]) for (const dx of [-0.2, 0, 0.2]) {
+        const [x, y] = map((c + 0.5 + dx) / 7, (r + 0.5 + dy) / 7); const v = px(x, y);
+        if (v >= 0) { s += v; n++; }
+      }
+      return n ? s / n : -1;
+    };
+    const g = [];
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 7; c++) { const v = cell(r, c); if (v < 0) return null; g.push(v); }
+    const border = [], outside = [];
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 7; c++) if (r === 0 || c === 0 || r === 6 || c === 6) border.push(g[r * 7 + c]);
+    for (let i = 0; i < 7; i++) for (const [u, v] of [[(i + 0.5) / 7, -0.45 / 7], [(i + 0.5) / 7, 7.45 / 7], [-0.45 / 7, (i + 0.5) / 7], [7.45 / 7, (i + 0.5) / 7]]) {
+      const [x, y] = map(u, v); const val = px(x, y); if (val >= 0) outside.push(val);
+    }
+    if (outside.length < 14) return null;
+    const med = a => { const s = [...a].sort((p, q) => p - q); return s[s.length >> 1]; };
+    const dark = med(border), light = med(outside);
+    if (light - dark < 18) return null;
+    const thr = (dark + light) / 2;
+    if (border.filter(v => v > thr).length > 2) return null;
+    const bits = [];
+    for (let r = 1; r < 6; r++) for (let c = 1; c < 6; c++) bits.push(g[r * 7 + (mirror ? 6 - c : c)] < thr ? 1 : 0);
+    const v = toInt(bits);
+    let best = null, bd = 99;
+    for (const t of table) { const d = pop(v ^ t.v); if (d < bd) { bd = d; best = t; } }
+    if (!best || bd > 2) return null;
+    const k = mirror ? (4 - best.k) % 4 : best.k;
+    return { id: best.id, k, answer: ANSWER_BY_ROT[k], dist: bd };
+  }
+
+  /* Karte als SVG (viewBox 0..12, Marker 8x8 mit Ruhezone) */
+  function cardSVG(id) {
+    const b = codes[id - 1], s = 8 / 7, o = 2; let cells = '';
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 7; c++) {
+      const isB = r === 0 || c === 0 || r === 6 || c === 6;
+      if (isB || b[(r - 1) * 5 + (c - 1)]) cells += `<rect x="${(o + c * s).toFixed(3)}" y="${(o + r * s).toFixed(3)}" width="${(s + 0.02).toFixed(3)}" height="${(s + 0.02).toFixed(3)}"/>`;
+    }
+    const L = (t, x, y, a) => `<text x="${x}" y="${y}" transform="rotate(${a} ${x} ${y})" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="0.8" font-weight="700" fill="#9a9a9a">${t}</text>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" class="card-svg"><rect width="12" height="12" fill="#fff"/>` +
+      `<g fill="#000" shape-rendering="crispEdges">${cells}</g>` +
+      L('A', 6, 0.85, 0) + L('B', 11.15, 6, 90) + L('C', 6, 11.15, 180) + L('D', 0.85, 6, 270) +
+      `<text x="0.6" y="1.15" font-family="Arial,sans-serif" font-size="0.65" fill="#9a9a9a" font-weight="700">${id}</text></svg>`;
+  }
+
+  return { detect, cardSVG, codes, MAX_CARDS, ANSWER_BY_ROT };
+})();
+</script>
+<script>
+{
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LET = ['A','B','C','D'];
+const uid = () => Math.random().toString(36).slice(2, 9);
+const KEY = 'kartenabfrage-v1';
+const toast = (m) => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); };
+
+function demo() {
+  const q = (text, options, correct) => ({ id: uid(), text, options, correct });
+  return {
+    classes: [{ id: 'k1', name: '10b (Beispiel)', students: ['Aylin','Ben','Can','Dana','Elif','Finn','Greta','Hamza','Ida','Jonas','Kemal','Lea','Mats','Nour','Ole','Paula','Rami','Sara','Tim','Uma','Vincent','Wiebke','Yusuf','Zoe'] }],
+    sets: [{ id: 's1', name: 'Energie – Wiederholung (Beispiel)', qs: [
+      q('In welcher Einheit gibt man Energie an?', ['Joule','Watt','Newton','Volt'], 'A'),
+      q('Ein Rucksack wird auf einen Schrank gehoben. Welche Energieform nimmt dabei zu?', ['Kinetische Energie','Thermische Energie','Potentielle Energie (Lageenergie)','Chemische Energie'], 'C'),
+      q('Was gibt die Leistung an?', ['Kraft pro Fläche','Masse pro Volumen','Strecke pro Zeit','Übertragene Energie pro Zeit'], 'D'),
+      q('Ein Motor hat einen Wirkungsgrad von 25 %. Das heißt …', ['ein Viertel der zugeführten Energie wird genutzt','er arbeitet nur 25 % der Zeit','er verliert 25 % der Energie','er gewinnt 25 % Energie dazu'], 'A'),
+      q('Energie kann weder erzeugt noch vernichtet werden.', ['Richtig','Falsch','',''], 'A')
+    ]}],
+    res: {}, sel: { cls: 'k1', set: 's1', q: 0 }
+  };
+}
+let st;
+try { st = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+if (!st || !st.classes) st = demo();
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} };
+
+const cls = () => st.classes.find(c => c.id === st.sel.cls) || st.classes[0];
+const set = () => st.sets.find(s => s.id === st.sel.set) || st.sets[0];
+const resFor = (s, c) => { const k = s.id + '|' + c.id; return st.res[k] || (st.res[k] = {}); };
+const ansFor = (q) => { if (R) return R.a; const r = resFor(set(), cls()); return r[q.id] || (r[q.id] = {}); };
+let R = null, role = null; // R: Zustand vom Beamer, wenn dieses Gerät Scanner ist
+const curQ = () => { if (R) return R.qid ? { id: R.qid, text: R.text, options: R.options, correct: R.correct } : null; const s = set(); if (!s || !s.qs.length) return null; st.sel.q = Math.max(0, Math.min(st.sel.q, s.qs.length - 1)); return s.qs[st.sel.q]; };
+const nOpts = q => q.options.filter((o, i) => i < 2 || o.trim()).length;
+let revealed = false;
+
+/* ---------- Navigation ---------- */
+const views = ['live','fragen','klasse','karten','ergebnisse'];
+function route() {
+  const hk = location.hash.slice(1);
+  if (hk.startsWith('koppeln-')) { history.replaceState(null, '', '#live'); setTimeout(() => joinHost(hk.slice(8)), 0); }
+  const v = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'live';
+  views.forEach(x => $('#v-' + x).hidden = x !== v);
+  document.querySelectorAll('#nav a').forEach(a => a.toggleAttribute('aria-current', a.getAttribute('href') === '#' + v));
+  if (v !== 'live') stopCam();
+  ({ live: renderLive, fragen: renderFragen, klasse: renderKlasse, karten: renderKarten, ergebnisse: renderRes })[v]();
+}
+addEventListener('hashchange', route);
+
+const fillSel = (el, arr, cur) => { el.innerHTML = arr.map(x => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.name)}</option>`).join(''); };
+
+/* ---------- Live ---------- */
+function renderLive() {
+  fillSel($('#lCls'), st.classes, cls()?.id); fillSel($('#lSet'), st.sets, set()?.id);
+  const s = set(), q = curQ();
+  const qi = R ? R.qi : st.sel.q, qn = R ? R.qn : (s ? s.qs.length : 0);
+  $('#qPos').textContent = qn ? `Frage ${qi + 1} / ${qn}` : 'keine Fragen';
+  $('#qPrev').disabled = !q || qi === 0; $('#qNext').disabled = !q || qi >= qn - 1;
+  broadcast();
+  $('#reveal').textContent = revealed ? 'Verbergen' : 'Auflösen';
+  if (!q) { $('#qText').textContent = R ? 'Am Beamer ist noch keine Frage ausgewählt.' : 'Lege unter „Fragen“ einen Fragensatz an.'; $('#qOpts').innerHTML = ''; renderRoster(); return; }
+  $('#qText').textContent = q.text;
+  const a = ansFor(q), vals = Object.values(a), tot = vals.length || 1;
+  $('#qOpts').innerHTML = LET.slice(0, nOpts(q)).map((L, i) => {
+    const n = vals.filter(v => v === L).length;
+    return `<div class="opt${revealed && q.correct === L ? ' right' : ''}"><div class="fill" style="background:var(--${L});width:${revealed ? (n / tot * 100) : 0}%"></div>
+      <span class="let" style="background:var(--${L})">${L}</span><span class="txt">${esc(q.options[i])}</span>
+      <span class="cnt">${revealed ? n + ' · ' + Math.round(n / tot * 100) + ' %' : ''}</span></div>`;
+  }).join('');
+  renderRoster();
+}
+function renderRoster() {
+  const c = cls(), q = curQ(); const a = q ? ansFor(q) : {};
+  const names = R ? Array(R.total).fill('') : c ? c.students : [];
+  const extra = Object.keys(a).map(Number).filter(n => n > names.length).sort((x, y) => x - y);
+  const items = names.map((n, i) => [i + 1, n]).concat(extra.map(n => [n, 'Karte ' + n]));
+  $('#roster').innerHTML = items.map(([no, name]) => {
+    const v = a[no]; let cl = '', tag = '';
+    if (v) { if (revealed) { cl = q.correct ? (v === q.correct ? 'ok' : 'bad') : 'on'; tag = v; } else { cl = 'on'; tag = '✓'; } }
+    return `<button class="tile ${cl}" data-no="${no}"><b>${no}</b><span>${esc(name)}</span><i>${tag}</i></button>`;
+  }).join('');
+  const answered = items.filter(([no]) => a[no]).length;
+  $('#cnt').textContent = `${answered}/${items.length}`;
+}
+$('#roster').addEventListener('click', e => {
+  const t = e.target.closest('.tile'); const q = curQ(); if (!t || !q) return;
+  const a = ansFor(q), no = t.dataset.no, opts = LET.slice(0, nOpts(q));
+  const i = opts.indexOf(a[no]);
+  if (i === opts.length - 1) delete a[no]; else a[no] = opts[i + 1];
+  if (R) send({ t: 'ans', q: q.id, no, a: a[no] || null });
+  save(); renderLive();
+});
+$('#lCls').onchange = e => { st.sel.cls = e.target.value; revealed = false; save(); renderLive(); };
+$('#lSet').onchange = e => { st.sel.set = e.target.value; st.sel.q = 0; revealed = false; save(); renderLive(); };
+$('#qPrev').onclick = () => { if (R) return send({ t: 'cmd', c: 'prev' }); st.sel.q--; revealed = false; save(); renderLive(); };
+$('#qNext').onclick = () => { if (R) return send({ t: 'cmd', c: 'next' }); st.sel.q++; revealed = false; save(); renderLive(); };
+$('#reveal').onclick = () => { if (R) return send({ t: 'cmd', c: 'reveal' }); revealed = !revealed; renderLive(); };
+$('#clearQ').onclick = () => { const q = curQ(); if (!q) return; if (R) return send({ t: 'cmd', c: 'clear' }); resFor(set(), cls())[q.id] = {}; pending = {}; save(); renderLive(); toast('Antworten gelöscht'); };
+document.addEventListener('keydown', e => {
+  if ($('#v-live').hidden || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (e.key === 'ArrowRight' && !$('#qNext').disabled) $('#qNext').click();
+  if (e.key === 'ArrowLeft' && !$('#qPrev').disabled) $('#qPrev').click();
+  if (e.key === ' ') { e.preventDefault(); $('#reveal').click(); }
+});
+
+/* ---------- Scanner ---------- */
+const vid = $('#vid'), ov = $('#ov'), work = document.createElement('canvas');
+let stream = null, pending = {}, loopOn = false;
+function grayFrom(src, sw, sh, maxW) {
+  const sc = Math.min(1, maxW / sw), W = Math.round(sw * sc), H = Math.round(sh * sc);
+  work.width = W; work.height = H; const x = work.getContext('2d', { willReadFrequently: true });
+  x.drawImage(src, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data, g = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) g[i] = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8;
+  return { g, W, H };
+}
+function nameOf(no) { if (R) return 'Karte ' + no; const c = cls(); return c && c.students[no - 1] ? c.students[no - 1] : 'Karte ' + no; }
+function drawMarkers(ms, W, H, bg) {
+  ov.width = W; ov.height = H; const x = ov.getContext('2d');
+  if (bg) x.drawImage(bg, 0, 0, W, H); else x.clearRect(0, 0, W, H);
+  const lw = Math.max(2, W / 400);
+  for (const m of ms) {
+    const c = m.corners; x.beginPath(); c.forEach((p, i) => i ? x.lineTo(p[0], p[1]) : x.moveTo(p[0], p[1])); x.closePath();
+    x.lineWidth = lw * 1.5; x.strokeStyle = '#2bd46b'; x.fillStyle = 'rgba(43,212,107,.25)'; x.fill(); x.stroke();
+    const cx = (c[0][0] + c[2][0]) / 2, cy = Math.min(...c.map(p => p[1])) - lw * 3;
+    x.font = `700 ${Math.max(14, W / 70)}px system-ui`; x.textAlign = 'center';
+    const t = !R && cls() && cls().students[m.id - 1] ? m.id + ' ' + nameOf(m.id) : nameOf(m.id); const tw = x.measureText(t).width;
+    x.fillStyle = 'rgba(0,0,0,.7)'; x.fillRect(cx - tw / 2 - 6, cy - W / 70 - 6, tw + 12, W / 70 + 12);
+    x.fillStyle = '#fff'; x.fillText(t, cx, cy);
+  }
+}
+function commit(id, answer) {
+  const q = curQ(); if (!q) return false;
+  if (LET.indexOf(answer) >= nOpts(q)) return false;
+  const a = ansFor(q); if (a[id] === answer) return false; a[id] = answer;
+  if (R) send({ t: 'ans', q: q.id, no: id, a: answer });
+  return true;
+}
+async function startCam() {
+  $('#camMsg').textContent = '';
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $('#camMsg').innerHTML = 'Der Browser gibt die Kamera nur frei, wenn die Seite über <b>https://</b> läuft (nicht als content://, file:// am Handy oder http://). Lade die Datei z. B. bei Netlify Drop hoch und öffne den https-Link – oder nutze <b>Foto aufnehmen</b>.';
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  } catch (e) {
+    $('#camMsg').innerHTML = 'Die Kamera ist hier nicht freigegeben (in der Claude-Vorschau ist sie gesperrt). Nutze <b>Foto aufnehmen</b> – oder öffne die App-Datei direkt im Browser bzw. über https, dann läuft der Live-Scan.';
+    return;
+  }
+  vid.srcObject = stream; await vid.play().catch(() => {});
+  $('#hint').hidden = true; $('#camBtn').textContent = 'Kamera stoppen'; pending = {};
+  loopOn = true; requestAnimationFrame(loop);
+}
+function stopCam() {
+  loopOn = false; if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; vid.srcObject = null;
+  $('#camBtn').textContent = 'Kamera starten';
+}
+function loop() {
+  if (!loopOn) return;
+  if (vid.videoWidth) {
+    const { g, W, H } = grayFrom(vid, vid.videoWidth, vid.videoHeight, 1280);
+    const r = PlickCore.detect(g, W, H, { mirror: $('#mirror').checked });
+    drawMarkers(r.markers, W, H, null);
+    let changed = false; const now = Date.now();
+    for (const m of r.markers) {
+      const p = pending[m.id];
+      if (p && p.a === m.answer && now - p.t < 1500) { p.n++; p.t = now; if (p.n >= 2 && commit(m.id, m.answer)) changed = true; }
+      else pending[m.id] = { a: m.answer, n: 1, t: now };
+    }
+    if (changed) { save(); renderLive(); }
+  }
+  setTimeout(() => requestAnimationFrame(loop), 30);
+}
+$('#camBtn').onclick = () => stream ? stopCam() : startCam();
+$('#photo').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  stopCam(); $('#camMsg').textContent = 'Foto wird ausgewertet …';
+  let img;
+  try { img = await createImageBitmap(f, { imageOrientation: 'from-image' }); }
+  catch (err) { img = new Image(); img.src = URL.createObjectURL(f); await img.decode(); }
+  const sw = img.width, sh = img.height;
+  await new Promise(r => setTimeout(r, 20));
+  const mir = $('#mirror').checked;
+  let best = { markers: [] };
+  for (const maxW of [2000, 1300]) { // zwei Auflösungen – verbindet nahe und ferne Karten
+    const { g, W, H } = grayFrom(img, sw, sh, maxW);
+    const r = PlickCore.detect(g, W, H, { mirror: mir, minPix: 40 });
+    const sc = 2000 / Math.max(2000, sw) / (W / sw);
+    r.markers.forEach(m => { m.corners = m.corners.map(p => [p[0] * sc, p[1] * sc]); });
+    const ids = new Set(best.markers.map(m => m.id));
+    best.markers.push(...r.markers.filter(m => !ids.has(m.id)));
+  }
+  const sc = Math.min(1, 2000 / sw);
+  $('#hint').hidden = true;
+  drawMarkers(best.markers, Math.round(sw * sc), Math.round(sh * sc), img);
+  let n = 0; best.markers.forEach(m => { if (commit(m.id, m.answer)) n++; });
+  save(); renderLive();
+  $('#camMsg').textContent = `${best.markers.length} Karte(n) erkannt, ${n} Antwort(en) neu eingetragen. Fehlende Karten einfach mit einem weiteren Foto nachscannen.`;
+};
+
+/* ---------- Fragen ---------- */
+function renderFragen() {
+  if (!st.sets.length) st.sets.push({ id: uid(), name: 'Neuer Fragensatz', qs: [] });
+  const s = set(); st.sel.set = s.id;
+  fillSel($('#fSet'), st.sets, s.id); $('#fName').value = s.name;
+  $('#fList').innerHTML = s.qs.length ? s.qs.map((q, qi) => `<div class="qedit" data-q="${qi}">
+    <div class="bar" style="margin:0"><b>Frage ${qi + 1}</b><span style="flex:1"></span>
+      <button class="btn ghost" data-act="up" aria-label="nach oben"${qi ? '' : ' disabled'}>↑</button>
+      <button class="btn ghost" data-act="down" aria-label="nach unten"${qi < s.qs.length - 1 ? '' : ' disabled'}>↓</button>
+      <button class="btn ghost" data-act="del">Löschen</button></div>
+    <textarea rows="2" data-f="text" aria-label="Fragetext">${esc(q.text)}</textarea>
+    ${LET.map((L, i) => `<div class="row"><span class="let" style="background:var(--${L})">${L}</span>
+      <input type="text" data-f="o${i}" value="${esc(q.options[i])}" placeholder="${i < 2 ? 'Antwort' : 'optional'}" aria-label="Antwort ${L}">
+      <label class="chk small"><input type="radio" name="c${qi}" data-f="c" value="${L}"${q.correct === L ? ' checked' : ''}> richtig</label></div>`).join('')}
+  </div>`).join('') : '<p class="muted">Noch keine Fragen.</p>';
+}
+$('#fList').addEventListener('input', e => {
+  const box = e.target.closest('.qedit'); if (!box) return; const q = set().qs[+box.dataset.q], f = e.target.dataset.f;
+  if (f === 'text') q.text = e.target.value; else if (f === 'c') q.correct = e.target.value; else if (f) q.options[+f.slice(1)] = e.target.value;
+  save();
+});
+$('#fList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]'); if (!b) return; const qs = set().qs, i = +b.closest('.qedit').dataset.q;
+  if (b.dataset.act === 'del') { qs.splice(i, 1); toast('Frage gelöscht'); }
+  if (b.dataset.act === 'up') [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]];
+  if (b.dataset.act === 'down') [qs[i + 1], qs[i]] = [qs[i], qs[i + 1]];
+  save(); renderFragen();
+});
+$('#fSet').onchange = e => { st.sel.set = e.target.value; st.sel.q = 0; save(); renderFragen(); };
+$('#fName').oninput = e => { set().name = e.target.value; save(); fillSel($('#fSet'), st.sets, set().id); };
+$('#fNew').onclick = () => { const s = { id: uid(), name: 'Neuer Fragensatz', qs: [] }; st.sets.push(s); st.sel.set = s.id; st.sel.q = 0; save(); renderFragen(); $('#fName').select(); };
+$('#fDel').onclick = () => {
+  const b = $('#fDel'); if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Satz löschen'; }, 3000); return; }
+  b.dataset.sure = ''; b.textContent = 'Satz löschen';
+  st.sets = st.sets.filter(s => s.id !== set().id); st.sel.set = st.sets[0]?.id; save(); renderFragen();
+};
+const blank = () => ({ id: uid(), text: '', options: ['', '', '', ''], correct: null });
+$('#fAdd').onclick = () => { set().qs.push(blank()); save(); renderFragen(); };
+$('#fAddTF').onclick = () => { const q = blank(); q.options = ['Richtig', 'Falsch', '', '']; set().qs.push(q); save(); renderFragen(); };
+$('#bulkGo').onclick = () => {
+  const blocks = $('#bulk').value.split(/\n\s*\n/).map(b => b.split('\n').map(l => l.trim()).filter(Boolean)).filter(b => b.length >= 3);
+  blocks.forEach(b => { const q = blank(); q.text = b[0]; b.slice(1, 5).forEach((l, i) => { if (l.startsWith('*')) { q.correct = LET[i]; l = l.slice(1).trim(); } q.options[i] = l; }); set().qs.push(q); });
+  save(); renderFragen(); toast(blocks.length + ' Frage(n) angehängt'); if (blocks.length) $('#bulk').value = '';
+};
+
+/* ---------- Klassen ---------- */
+function renderKlasse() {
+  if (!st.classes.length) st.classes.push({ id: uid(), name: 'Neue Klasse', students: [] });
+  const c = cls(); st.sel.cls = c.id;
+  fillSel($('#kCls'), st.classes, c.id); $('#kName').value = c.name; $('#kNames').value = c.students.join('\n');
+  renderMap();
+}
+function renderMap() { $('#kMap').innerHTML = cls().students.map((n, i) => `<tr><td>${esc(n)}</td><td>${i + 1}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">noch leer</td></tr>'; }
+$('#kCls').onchange = e => { st.sel.cls = e.target.value; save(); renderKlasse(); };
+$('#kName').oninput = e => { cls().name = e.target.value; save(); fillSel($('#kCls'), st.classes, cls().id); };
+$('#kNames').oninput = e => { cls().students = e.target.value.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 63); save(); renderMap(); };
+$('#kNew').onclick = () => { const c = { id: uid(), name: 'Neue Klasse', students: [] }; st.classes.push(c); st.sel.cls = c.id; save(); renderKlasse(); $('#kName').select(); };
+$('#kDel').onclick = () => {
+  const b = $('#kDel'); if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Klasse löschen'; }, 3000); return; }
+  b.dataset.sure = ''; b.textContent = 'Klasse löschen';
+  st.classes = st.classes.filter(c => c.id !== cls().id); st.sel.cls = st.classes[0]?.id; save(); renderKlasse();
+};
+
+/* ---------- Karten ---------- */
+function cardWithName(no, c) {
+  let svg = PlickCore.cardSVG(no);
+  const n = $('#pNames').checked && c && c.students[no - 1];
+  if (n) svg = svg.replace('</svg>', `<text x="11.4" y="1.15" text-anchor="end" font-family="Arial,sans-serif" font-size="0.5" fill="#9a9a9a">${esc(n.slice(0, 14))}</text></svg>`);
+  return svg;
+}
+function renderKarten() {
+  fillSel($('#pCls'), st.classes, cls()?.id);
+  if (!$('#pCount').value) $('#pCount').value = Math.max(1, Math.min(63, cls()?.students.length || 30));
+  const n = Math.max(1, Math.min(63, +$('#pCount').value || 1)), c = cls();
+  $('#pPrev').innerHTML = Array.from({ length: n }, (_, i) => `<figure>${cardWithName(i + 1, c)}<figcaption>${i + 1}${c && c.students[i] ? ' · ' + esc(c.students[i]) : ''}</figcaption></figure>`).join('');
+}
+function printDoc() {
+  const n = Math.max(1, Math.min(63, +$('#pCount').value || 1)), per = +$('#pPer').value, side = Math.sqrt(per), c = cls();
+  const size = { 1: 180, 4: 92, 9: 60 }[per];
+  let pages = '';
+  for (let p = 0; p < n; p += per) {
+    let cells = ''; for (let i = p; i < Math.min(n, p + per); i++) cells += `<div class="c">${cardWithName(i + 1, c)}</div>`;
+    pages += `<div class="pg" style="grid-template-columns:repeat(${side},${size}mm)">${cells}</div>`;
+  }
+  const css = `@page{size:A4;margin:10mm}body{margin:0;font-family:Arial,sans-serif}.pg{display:grid;gap:6mm;justify-content:center;align-content:start;page-break-after:always;break-after:page}.pg:last-child{page-break-after:auto}.c{width:${size}mm;height:${size}mm;outline:0.2mm dashed #bbb}.c svg{width:100%;height:100%;display:block}`;
+  return { css, body: pages };
+}
+['#pCls', '#pCount', '#pNames', '#pPer'].forEach(s => $(s).addEventListener('input', () => { if (s === '#pCls') { st.sel.cls = $('#pCls').value; save(); $('#pCount').value = ''; } renderKarten(); }));
+$('#pPrint').onclick = () => {
+  const { css, body } = printDoc();
+  $('#printArea').innerHTML = `<style>@media print{${css}}</style>` + body;
+  try { window.print(); } catch (e) {}
+  setTimeout(() => { if (isPreview()) $('#pMsg').textContent = 'Erscheint kein Druckdialog? Dann „Druckdatei herunterladen“ und die Datei im Browser öffnen.'; }, 600);
+};
+$('#pFile').onclick = () => {
+  const { css, body } = printDoc();
+  saveFile('antwortkarten.html', `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Antwortkarten</title><style>${css}</style></head><body>${body}<script>addEventListener('load',()=>setTimeout(()=>print(),300))<\/script></body></html>`, 'text/html');
+};
+
+/* ---------- Ergebnisse ---------- */
+function table() {
+  const c = cls(), s = set(); if (!c || !s) return { head: [], rows: [], foot: [] };
+  const r = resFor(s, c);
+  const rows = c.students.map((n, i) => {
+    const no = i + 1, cells = s.qs.map(q => (r[q.id] || {})[no] || '');
+    const scored = s.qs.filter(q => q.correct && (r[q.id] || {})[no]);
+    const right = scored.filter(q => r[q.id][no] === q.correct).length;
+    return { no, n, cells, pct: scored.length ? Math.round(right / scored.length * 100) : null };
+  });
+  const foot = s.qs.map(q => { const v = Object.values(r[q.id] || {}); return q.correct && v.length ? Math.round(v.filter(x => x === q.correct).length / v.length * 100) : null; });
+  return { head: s.qs, rows, foot };
+}
+function renderRes() {
+  fillSel($('#rCls'), st.classes, cls()?.id); fillSel($('#rSet'), st.sets, set()?.id);
+  const { head, rows, foot } = table();
+  if (!rows.length || !head.length) { $('#rTab').innerHTML = '<tr><td class="muted">Noch keine Daten – Klasse und Fragen anlegen, dann abfragen.</td></tr>'; return; }
+  $('#rTab').innerHTML = `<thead><tr><th>Name</th><th>Karte</th>${head.map((q, i) => `<th title="${esc(q.text)}">F${i + 1}${q.correct ? ' (' + q.correct + ')' : ''}</th>`).join('')}<th>richtig</th></tr></thead><tbody>` +
+    rows.map(r => `<tr><td>${esc(r.n)}</td><td>${r.no}</td>${r.cells.map((v, i) => `<td class="${v && head[i].correct ? (v === head[i].correct ? 'ok' : 'bad') : ''}">${v || '–'}</td>`).join('')}<td class="pct">${r.pct === null ? '–' : r.pct + ' %'}</td></tr>`).join('') +
+    `</tbody><tfoot><tr><th>Anteil richtig</th><th></th>${foot.map(p => `<th>${p === null ? '–' : p + ' %'}</th>`).join('')}<th></th></tr></tfoot>`;
+}
+function csv() {
+  const { head, rows } = table(); const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const lines = [['Name', 'Karte', ...head.map((h, i) => `F${i + 1}: ${h.text}`), 'Prozent richtig'].map(q).join(';')];
+  lines.push(['Lösung', '', ...head.map(h => h.correct || ''), ''].map(q).join(';'));
+  rows.forEach(r => lines.push([r.n, r.no, ...r.cells, r.pct ?? ''].map(q).join(';')));
+  return '﻿' + lines.join('\r\n');
+}
+$('#rCls').onchange = e => { st.sel.cls = e.target.value; save(); renderRes(); };
+$('#rSet').onchange = e => { st.sel.set = e.target.value; save(); renderRes(); };
+const fname = s => s.replace(/[^\wäöüÄÖÜß-]+/g, '_');
+$('#rCsv').onclick = () => saveFile(`ergebnisse_${fname(cls().name)}_${fname(set().name)}.csv`, csv(), 'text/csv');
+$('#rCopy').onclick = async () => { try { await navigator.clipboard.writeText(csv().slice(1)); toast('CSV kopiert'); } catch (e) { toast('Kopieren nicht erlaubt'); } };
+$('#rClear').onclick = () => {
+  const b = $('#rClear'); if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Ergebnisse löschen'; }, 3000); return; }
+  b.dataset.sure = ''; b.textContent = 'Ergebnisse löschen'; delete st.res[set().id + '|' + cls().id]; save(); renderRes();
+};
+$('#bExp').onclick = () => saveFile('kartenabfrage_sicherung.json', JSON.stringify(st, null, 1), 'application/json');
+$('#bImp').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try { const d = JSON.parse(await f.text()); if (!d.classes || !d.sets) throw 0; st = d; st.res ||= {}; st.sel ||= {}; save(); toast('Sicherung importiert'); route(); }
+  catch (err) { toast('Die Datei ist keine gültige Sicherung'); }
+};
+
+/* ---------- Dateien ---------- */
+const isPreview = () => !!(window.claude && window.claude.use);
+async function saveFile(name, data, mime) {
+  if (isPreview()) {
+    const d = await window.claude.use('downloads').catch(() => null);
+    if (!d) { toast('Herunterladen ist hier nicht verfügbar'); return; }
+    try { await d.save({ filename: name, data }); } catch (e) { toast('Herunterladen abgebrochen'); }
+    return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: mime })); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ---------- Kopplung Beamer <-> Handy (WebRTC über PeerJS) ---------- */
+const PREFIX = 'kartenabfrage-', CODECH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+let peer = null, conns = [], hostConn = null, hostTries = 0;
+const loadScript = src => new Promise((ok, no) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = no; document.head.append(el); });
+async function lib(globalName, urls) { if (window[globalName]) return true; for (const u of urls) { try { await loadScript(u); if (window[globalName]) return true; } catch (e) {} } return false; }
+const needPeer = () => lib('Peer', ['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js']);
+const newCode = () => Array.from({ length: 6 }, () => CODECH[Math.random() * CODECH.length | 0]).join('');
+function setStatus(t, on) {
+  $('#pairStatus').textContent = t; const ch = $('#pairChip');
+  ch.hidden = !on; ch.textContent = on || ''; $('#pairBtn').textContent = on ? 'Kopplung' : 'Handy koppeln';
+}
+function showPair(show) { $('#pair').hidden = !show; }
+const noLib = () => setStatus(isPreview() ? 'In der Claude-Vorschau ist die Kopplung gesperrt – nutze deinen Netlify-Link.' : 'Kopplung nicht möglich: keine Internetverbindung oder der Dienst ist blockiert.');
+function endPair() {
+  try { peer && peer.destroy(); } catch (e) {}
+  peer = null; conns = []; hostConn = null; R = null; role = null; revealed = false; pending = {};
+  document.body.classList.remove('host-on', 'scan-on'); setStatus(''); renderLive();
+}
+/* Beamer */
+async function startHost() {
+  if (role === 'scan') endPair();
+  role = 'host'; $('#hostBox').hidden = false; setStatus('Verbinde mit Vermittlungsdienst …');
+  if (!await needPeer()) return noLib();
+  st.pairCode ||= newCode(); save();
+  $('#pairCode').textContent = st.pairCode.slice(0, 3) + ' ' + st.pairCode.slice(3); showQR(st.pairCode);
+  try { peer && peer.destroy(); } catch (e) {}
+  peer = new Peer(PREFIX + st.pairCode);
+  peer.on('open', () => { hostTries = 0; updHost(); });
+  peer.on('connection', c => {
+    c.on('open', () => { conns.push(c); updHost(); try { c.send(stateMsg()); } catch (e) {} });
+    c.on('data', onHostData);
+    c.on('close', () => { conns = conns.filter(x => x !== c); updHost(); });
+    c.on('error', () => {});
+  });
+  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id') { // alter Eintrag nach Neuladen – kurz warten, dann neuer Code
+      if (++hostTries > 2) { st.pairCode = newCode(); save(); hostTries = 0; }
+      setStatus('Code wird noch freigegeben … einen Moment'); setTimeout(startHost, 3500);
+    } else if (e.type !== 'peer-unavailable') setStatus('Verbindungsproblem (' + e.type + '). Seite neu laden oder Netz wechseln.');
+  });
+}
+function updHost() {
+  const n = conns.length;
+  document.body.classList.toggle('host-on', n > 0);
+  setStatus(n ? 'Handy verbunden – du kannst dieses Fenster schließen.' : 'Bereit. Warte auf das Handy …', n ? (n > 1 ? n + ' Handys verbunden' : 'Handy verbunden') : 'Warte auf Handy');
+  if (n) setTimeout(() => showPair(false), 1500);
+  renderLive();
+}
+function stateMsg() {
+  const q = curQ(), s = set(), c = cls();
+  return { t: 'state', qid: q ? q.id : null, qi: st.sel.q, qn: s ? s.qs.length : 0, text: q ? q.text : '',
+    options: q ? q.options.slice(0, nOpts(q)) : [], correct: revealed && q ? q.correct : null, revealed,
+    total: c ? c.students.length : 0, a: q ? { ...ansFor(q) } : {} };
+}
+let bcT = 0;
+function broadcast() { if (role !== 'host' || !conns.length) return; clearTimeout(bcT); bcT = setTimeout(() => { const m = stateMsg(); conns.forEach(c => { try { c.send(m); } catch (e) {} }); }, 40); }
+function onHostData(d) {
+  if (!d || typeof d !== 'object') return; const q = curQ();
+  if (d.t === 'ans' && q && d.q === q.id) {
+    const no = parseInt(d.no, 10); if (!(no > 0 && no <= 63)) return;
+    const a = ansFor(q);
+    if (d.a === null) delete a[no]; else if (LET.slice(0, nOpts(q)).includes(d.a)) a[no] = d.a; else return;
+    save(); renderLive();
+  } else if (d.t === 'ans') broadcast(); // veraltete Frage: Handy neu synchronisieren
+  if (d.t === 'cmd') {
+    const b = { next: '#qNext', prev: '#qPrev', reveal: '#reveal', clear: '#clearQ' }[d.c];
+    if (b && !$(b).disabled) $(b).click();
+  }
+}
+async function showQR(code) {
+  const box = $('#qr'); box.innerHTML = '';
+  if (location.protocol !== 'https:') return;
+  if (!await lib('qrcode', ['https://unpkg.com/qrcode-generator@1.4.4/qrcode.js', 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js'])) return;
+  try { const q = qrcode(0, 'M'); q.addData(location.origin + location.pathname + '#koppeln-' + code); q.make(); box.innerHTML = q.createSvgTag(6, 2); } catch (e) {}
+}
+/* Handy */
+async function joinHost(code) {
+  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== 6) { setStatus('Bitte den 6-stelligen Code vom Beamer eingeben.'); showPair(true); return; }
+  if (role) endPair();
+  role = 'scan'; showPair(true); $('#hostBox').hidden = true; $('#joinCode').value = code; setStatus('Verbinde …');
+  if (!await needPeer()) return noLib();
+  peer = new Peer();
+  peer.on('open', () => {
+    hostConn = peer.connect(PREFIX + code, { reliable: true });
+    hostConn.on('open', () => { setStatus('Mit dem Beamer verbunden.', 'Mit Beamer verbunden'); document.body.classList.add('scan-on'); setTimeout(() => showPair(false), 1200); });
+    hostConn.on('data', d => {
+      if (!d || d.t !== 'state') return;
+      if (!R || R.qid !== d.qid) pending = {};
+      R = { qid: d.qid, qi: +d.qi || 0, qn: +d.qn || 0, text: String(d.text || ''), options: (d.options || []).map(String).slice(0, 4),
+        correct: d.correct || null, total: Math.min(63, +d.total || 0), a: d.a && typeof d.a === 'object' ? d.a : {} };
+      revealed = !!d.revealed; renderLive();
+    });
+    hostConn.on('close', () => {
+      R = null; document.body.classList.remove('scan-on'); renderLive(); showPair(true);
+      setStatus('Verbindung zum Beamer getrennt. Auf „Verbinden“ tippen, um es erneut zu versuchen.', 'Getrennt'); $('#pairChip').classList.add('off');
+    });
+  });
+  peer.on('error', e => setStatus(e.type === 'peer-unavailable' ? 'Code nicht gefunden. Ist am Beamer „Kopplungscode anzeigen“ geöffnet?' : 'Verbindungsproblem (' + e.type + '). Im Schul-WLAN hilft oft mobiles Internet am Handy.'));
+}
+function send(m) { try { if (hostConn && hostConn.open) hostConn.send(m); else toast('Nicht mit dem Beamer verbunden'); } catch (e) {} }
+$('#pairBtn').onclick = () => showPair($('#pair').hidden);
+$('#pairClose').onclick = () => showPair(false);
+$('#pairHost').onclick = startHost;
+$('#pairJoin').onclick = () => { $('#pairChip').classList.remove('off'); joinHost($('#joinCode').value); };
+$('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#pairJoin').click(); });
+$('#pairEnd').onclick = () => { endPair(); showPair(false); };
+
+route();
+}
+</script>
+</body>
+</html>
