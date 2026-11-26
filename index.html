@@ -87,6 +87,8 @@ td.ok{color:var(--ok);font-weight:700}td.bad{color:var(--bad);font-weight:700}
 .how div{border:1.5px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
 @media(max-width:700px){.how{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 #printArea{display:none}
+.qimg[hidden],[hidden]{display:none!important}
+.qedit.drop{outline:3px dashed var(--acc);outline-offset:4px;border-radius:10px;background:color-mix(in srgb,var(--acc) 8%,transparent)}
 .qimg{display:block;max-width:100%;max-height:42vh;margin:0 auto 14px;border-radius:10px;background:#fff;border:1.5px solid var(--line)}
 .imgrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .imgrow img{height:72px;width:auto;border-radius:6px;border:1.5px solid var(--line);background:#fff}
@@ -144,7 +146,7 @@ body.scan-on .qtext{font-size:20px}
     </div>
     <p id="pairStatus" role="status" style="font-weight:700;margin:12px 0 2px"></p>
     <p id="pairDiag" class="small muted" style="margin:0 0 8px"></p>
-    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-6</span></div>
+    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-7</span></div>
   </div>
   <div class="live">
     <div class="panel">
@@ -666,7 +668,7 @@ function renderFragen() {
     <textarea rows="2" data-f="text" aria-label="Fragetext">${esc(q.text)}</textarea>
     <div class="imgrow">${q.img ? `<img src="${esc(q.img)}" alt="Bild zu Frage ${qi + 1}">` : ''}
       <label class="btn ghost" style="display:flex;align-items:center">${q.img ? 'Bild ersetzen' : 'Bild hinzufügen'}<input type="file" accept="image/*" data-img hidden></label>
-      ${q.img ? '<button class="btn ghost" data-act="noimg">Bild entfernen</button>' : '<span class="small muted">oder Bild kopieren und hier mit Strg+V einfügen</span>'}</div>
+      ${q.img ? '<button class="btn ghost" data-act="noimg">Bild entfernen</button>' : '<span class="small muted">oder Bild hierher ziehen bzw. mit Strg+V einfügen</span>'}</div>
     ${LET.map((L, i) => `<div class="row"><span class="let" style="background:var(--${L})">${L}</span>
       <input type="text" data-f="o${i}" value="${esc(q.options[i])}" placeholder="${i < 2 ? 'Antwort' : 'optional'}" aria-label="Antwort ${L}">
       <label class="chk small"><input type="radio" name="c${qi}" data-f="c" value="${L}"${q.correct === L ? ' checked' : ''}> richtig</label></div>`).join('')}
@@ -699,6 +701,23 @@ async function setImg(qi, file) {
   catch (e) { toast('Das Bild konnte nicht gelesen werden'); }
 }
 $('#fList').addEventListener('change', e => { if (e.target.matches('input[data-img]')) setImg(+e.target.closest('.qedit').dataset.q, e.target.files[0]); });
+/* Drag & Drop: Bild auf eine Frage ziehen */
+let dropBox = null;
+const hasFile = e => [...(e.dataTransfer?.types || [])].includes('Files');
+$('#fList').addEventListener('dragover', e => {
+  const box = e.target.closest('.qedit'); if (!box || !hasFile(e)) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  if (dropBox !== box) { dropBox && dropBox.classList.remove('drop'); dropBox = box; box.classList.add('drop'); }
+});
+$('#fList').addEventListener('dragleave', e => { const box = e.target.closest('.qedit'); if (box && !box.contains(e.relatedTarget)) { box.classList.remove('drop'); if (dropBox === box) dropBox = null; } });
+$('#fList').addEventListener('drop', e => {
+  const box = e.target.closest('.qedit'); if (!box) return; e.preventDefault();
+  box.classList.remove('drop'); dropBox = null;
+  const f = [...(e.dataTransfer?.files || [])].find(x => x.type.startsWith('image/'));
+  if (f) setImg(+box.dataset.q, f); else toast('Bitte eine Bilddatei hineinziehen');
+});
+// Daneben fallengelassene Dateien nicht im Browser öffnen
+['dragover', 'drop'].forEach(t => window.addEventListener(t, e => { if (hasFile(e) && !e.defaultPrevented) e.preventDefault(); }));
 $('#fList').addEventListener('paste', e => {
   const box = e.target.closest('.qedit'); if (!box) return;
   const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
