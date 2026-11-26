@@ -134,7 +134,7 @@ body.scan-on .qtext{font-size:20px}
     </div>
     <p id="pairStatus" role="status" style="font-weight:700;margin:12px 0 2px"></p>
     <p id="pairDiag" class="small muted" style="margin:0 0 8px"></p>
-    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-4</span></div>
+    <div class="bar" style="margin:0"><button class="btn ghost" id="pairEnd">Kopplung beenden</button><button class="btn ghost" id="pairClose">Schließen</button><span class="small muted" style="margin-left:auto">Version 26.11.-5</span></div>
   </div>
   <div class="live">
     <div class="panel">
@@ -795,7 +795,11 @@ async function saveFile(name, data, mime) {
    Weg 1: direkte WebRTC-Verbindung (PeerJS).  Weg 2 (Ausweichweg): Weiterleitung über öffentliche MQTT-Broker.
    Übertragen werden nur Frage, Kartennummern und Buchstaben – keine Namen. */
 const PREFIX = 'kartenabfrage-', CODECH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const BROKERS = [ // die ersten beiden über Port 443 – kommen auch durch strenge Schulnetze
+  { url: 'wss://public.cloud.shiftr.io', username: 'public', password: 'public' },
+  { url: 'wss://demo.tbmq.io:443/mqtt', username: 'demo' },
+  { url: 'wss://broker.hivemq.com:8884/mqtt' },
+  { url: 'wss://broker.emqx.io:8084/mqtt' }];
 const TOPIC = c => 'kartenabfrage/v2/' + c;
 let peer = null, conns = [], hostConn = null, hostTries = 0;
 let relays = [], relayPhones = {}, mode = null, myId = Math.random().toString(36).slice(2, 10), joinTimer = 0, pingTimer = 0, pruneTimer = 0;
@@ -817,10 +821,10 @@ function showDiag() { $('#pairDiag').textContent = `Direktweg: ${diag.direct} ·
 async function relayConnect(code, sub, onMsg, onConn) {
   diag.relayOk = 0; diag.relayTried = 0; showDiag();
   if (!await needMqtt()) { diag.relayTried = 1; showDiag(); return 0; }
-  const tries = BROKERS.map(url => new Promise(res => {
+  const tries = BROKERS.map(b => new Promise(res => {
     let done = false; const fin = v => { if (!done) { done = true; diag.relayTried++; if (v) diag.relayOk++; showDiag(); res(v); } };
     try {
-      const cl = mqtt.connect(url, { clientId: 'ka_' + myId + '_' + Math.random().toString(36).slice(2, 6), clean: true, connectTimeout: 7000, reconnectPeriod: 4000, keepalive: 30 });
+      const cl = mqtt.connect(b.url, { username: b.username, password: b.password, clientId: 'ka_' + myId + '_' + Math.random().toString(36).slice(2, 6), clean: true, connectTimeout: 7000, reconnectPeriod: 4000, keepalive: 30 });
       cl.on('connect', () => { cl.subscribe(TOPIC(code) + '/' + sub, () => { if (!done) { fin(cl); onConn(cl); } }); });
       cl.on('message', (t, p) => { try { onMsg(JSON.parse(p.toString())); } catch (e) {} });
       cl.on('error', () => {}); setTimeout(() => { if (!done) { try { cl.end(true); } catch (e) {} fin(null); } }, 9000);
